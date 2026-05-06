@@ -38,9 +38,7 @@ fn test_resolve_boxed_array_items() {
                                 "name".to_string(),
                                 ReferenceOr::boxed_item(Schema {
                                     schema_data: Default::default(),
-                                    schema_kind: SchemaKind::Type(Type::String(
-                                        Default::default(),
-                                    )),
+                                    schema_kind: SchemaKind::Type(Type::String(Default::default())),
                                 }),
                             )]),
                             required: vec!["name".to_string()],
