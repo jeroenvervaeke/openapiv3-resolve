@@ -1,0 +1,14 @@
+[package]
+name = "openapiv3-resolve"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Reference resolution helpers for the openapiv3 crate."
+repository = "https://github.com/jeroenvervaeke/openapiv3-resolve"
+keywords = ["openapi", "v3", "resolve"]
+categories = ["data-structures", "parser-implementations"]
+
+[dependencies]
+indexmap = "2"
+openapiv3 = "2.2"
+
