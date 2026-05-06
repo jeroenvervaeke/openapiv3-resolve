@@ -11,4 +11,5 @@ categories = ["data-structures", "parser-implementations"]
 [dependencies]
 indexmap = "2"
 openapiv3 = "2.2"
+serde_json = "1"
 

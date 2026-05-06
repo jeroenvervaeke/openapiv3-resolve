@@ -1,9 +1,17 @@
 //! Reference resolution helpers for [`openapiv3`].
 //!
-//! This crate provides traits and implementations to resolve `$ref` pointers
-//! such as `#/components/schemas/Foo` against an [`OpenAPI`] document.
+//! This crate provides two complementary APIs:
 //!
-//! ## Example
+//! 1. **In-place resolution traits** ([`Resolve`], [`ResolveWithOpenAPI`],
+//!    [`ResolveWithOpenAPIAndPath`]) that walk a borrowed [`OpenAPI`]
+//!    document and follow `$ref` pointers on demand.
+//! 2. **Eager resolution** ([`resolve`]) that consumes an [`OpenAPI`] and
+//!    produces a [`ResolvedOpenAPI`] in which every `ReferenceOr<T>` has been
+//!    replaced with a [`Resolved<T>`] / [`ResolvedWeak<T>`] handle. The
+//!    components map holds the strong references; `$ref` back-edges are
+//!    weak so cycles between named components do not leak.
+//!
+//! ## Example: in-place resolution
 //!
 //! ```no_run
 //! use openapiv3::OpenAPI;
@@ -22,8 +30,40 @@
 //! # Some(())
 //! # }
 //! ```
+//!
+//! ## Example: eager resolution
+//!
+//! ```no_run
+//! use openapiv3::OpenAPI;
+//! use openapiv3_resolve::OpenAPIExt;
+//!
+//! # fn demo(openapi: OpenAPI) -> Result<(), openapiv3_resolve::ResolveError> {
+//! let resolved = openapi.resolve_all()?;
+//! let pet = resolved.components.schemas.get("Pet").expect("Pet defined");
+//! // `pet` is `Resolved<ResolvedSchema>`, derefs to `ResolvedSchema`.
+//! let _ = &pet.schema_data;
+//! # Ok(())
+//! # }
+//! ```
+
 use indexmap::IndexMap;
 use openapiv3::*;
+
+mod error;
+mod handle;
+mod resolve;
+mod resolved;
+
+pub use error::ResolveError;
+pub use handle::{Resolved, ResolvedRefOr, ResolvedWeak};
+pub use resolve::{resolve, OpenAPIExt};
+pub use resolved::{
+    ResolvedAdditionalProperties, ResolvedAnySchema, ResolvedArrayType, ResolvedCallback,
+    ResolvedComponents, ResolvedEncoding, ResolvedHeader, ResolvedMediaType, ResolvedObjectType,
+    ResolvedOpenAPI, ResolvedOperation, ResolvedParameter, ResolvedParameterData,
+    ResolvedParameterSchemaOrContent, ResolvedPathItem, ResolvedPaths, ResolvedRequestBody,
+    ResolvedResponse, ResolvedResponses, ResolvedSchema, ResolvedSchemaKind, ResolvedType,
+};
 
 pub trait Resolve<T> {
     fn resolve<'a>(&'a self, path: &str) -> Option<&'a T>;
