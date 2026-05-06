@@ -49,14 +49,12 @@
 use indexmap::IndexMap;
 use openapiv3::*;
 
-mod error;
 mod handle;
 mod resolve;
 mod resolved;
 
-pub use error::ResolveError;
 pub use handle::{Resolved, ResolvedRefOr, ResolvedWeak};
-pub use resolve::{resolve, OpenAPIExt};
+pub use resolve::{resolve, OpenAPIExt, ResolveError};
 pub use resolved::{
     ResolvedAdditionalProperties, ResolvedAnySchema, ResolvedArrayType, ResolvedCallback,
     ResolvedComponents, ResolvedEncoding, ResolvedHeader, ResolvedMediaType, ResolvedObjectType,
