@@ -11,11 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-- `Resolve<T>` on `OpenAPI`, resolving pointers like `#/components/schemas/Pet`.
-- `ResolveWithOpenAPI<T>` on `ReferenceOr<T>`, `ReferenceOr<Box<T>>` and their
-  `Option<...>` variants.
-- `ResolveWithOpenAPIAndPath<T>` on `Components` and
-  `IndexMap<String, ReferenceOr<T>>`.
+- `Resolve` on `OpenAPI`: `resolve_ref::<T>(pointer)` resolves a full pointer
+  such as `#/components/schemas/Pet`, following chains of `$ref`s.
+- `ResolveWithOpenAPI<T>` on `ReferenceOr<T>` and `ReferenceOr<Box<T>>`.
+- `ResolveOptionalWithOpenAPI<T>` on `Option<R>`: an absent field is `Ok(None)`,
+  not an error.
+- `ResolveError` reports why a reference failed — a dangling name, a reference
+  into the wrong section, a pointer into another document, or a chain that
+  never terminates — instead of a bare `None`.
+- Resolvable targets are the nine `#/components` sections and `#/paths`, with
+  RFC 6901 (`~0`, `~1`) unescaping.
+- Reference chains are walked iteratively and capped at `MAX_REFERENCE_HOPS`,
+  so a cyclic document errors instead of overflowing the stack.
 
 [Unreleased]: https://github.com/jeroenvervaeke/openapiv3-resolve/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/jeroenvervaeke/openapiv3-resolve/releases/tag/v0.1.0
