@@ -47,6 +47,11 @@ jobs:
     - name: Build
       run: cargo build --verbose
 
+    - name: Build docs
+      run: cargo doc --no-deps
+      env:
+        RUSTDOCFLAGS: -D warnings
+
     - name: Publish dry run
       run: cargo publish --dry-run
 
@@ -74,11 +79,32 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo-
 
-    - name: Install Chrome
-      uses: browser-actions/setup-chrome@v2
-      with:
-        chrome-version: stable
-
+    # Plain `cargo test` on purpose: `--all-targets` silently skips doctests,
+    # and the README example is a doctest.
     - name: Run tests
-      run: cargo test --all-targets --verbose
+      run: cargo test --verbose
 
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Install Rust toolchain
+      run: |
+        rustup toolchain install 1.85 --profile minimal
+        rustup default 1.85
+
+    - name: Cache cargo registry
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-msrv-
+
+    # Must match `rust-version` in Cargo.toml.
+    - name: Check MSRV
+      run: cargo check --all-targets --verbose
