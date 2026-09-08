@@ -1,5 +1,7 @@
 use indexmap::IndexMap;
-use openapiv3::*;
+use openapiv3::{
+    ArrayType, Components, ObjectType, OpenAPI, ReferenceOr, Schema, SchemaData, SchemaKind, Type,
+};
 use openapiv3_resolve::ResolveWithOpenAPI;
 
 /// Verifies that `ReferenceOr<Box<T>>` (e.g. `ArrayType::items`) can be
