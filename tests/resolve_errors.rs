@@ -112,7 +112,7 @@ fn reports_a_pointer_into_the_middle_of_a_component() {
 }
 
 #[test]
-fn every_error_renders_a_message() {
+fn every_error_renders_a_distinct_message_naming_its_cause() {
     let errors = [
         ResolveError::NotALocalReference {
             reference: "Pet".to_owned(),
@@ -145,13 +145,41 @@ fn every_error_renders_a_message() {
         },
         ResolveError::ReferenceChainTooLong {
             reference: "#/components/schemas/A".to_owned(),
+            last: "#/components/schemas/B".to_owned(),
             max_hops: 100,
         },
     ];
 
-    for error in errors {
-        let rendered = error.to_string();
-        assert!(!rendered.is_empty(), "{error:?} rendered nothing");
-        let _: &dyn std::error::Error = &error;
+    let mut rendered: Vec<String> = Vec::new();
+    for error in &errors {
+        let message = error.to_string();
+        let subject = match error {
+            ResolveError::NotALocalReference { reference } => reference,
+            ResolveError::ExternalDocument { document } => document,
+            ResolveError::MalformedPointer { reference } => reference,
+            ResolveError::UnsupportedRootSection { section } => section,
+            ResolveError::UnknownSection { section } => section,
+            ResolveError::ComponentsMissing { .. } => "components/schemas",
+            ResolveError::NotFound { name, .. } => name,
+            ResolveError::SectionMismatch { .. } => "components/responses",
+            ResolveError::PointerTooDeep { reference } => reference,
+            ResolveError::ReferenceChainTooLong { last, .. } => last,
+            _ => panic!("unhandled variant: {error:?}"),
+        };
+        assert!(
+            message.contains(subject),
+            "{message:?} does not name {subject:?}"
+        );
+        let _: &dyn std::error::Error = error;
+        rendered.push(message);
     }
+
+    let mut distinct = rendered.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        rendered.len(),
+        "two variants render the same message"
+    );
 }

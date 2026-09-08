@@ -64,6 +64,8 @@ pub enum ResolveError {
     ReferenceChainTooLong {
         /// The reference the walk started from.
         reference: String,
+        /// The reference the walk gave up on, which is where the cycle runs.
+        last: String,
         /// The hop limit that was hit, [`crate::MAX_REFERENCE_HOPS`].
         max_hops: usize,
     },
@@ -116,11 +118,13 @@ impl fmt::Display for ResolveError {
             }
             Self::ReferenceChainTooLong {
                 reference,
+                last,
                 max_hops,
             } => {
                 write!(
                     f,
-                    "`{reference}` did not reach an item within {max_hops} hops (cyclic?)"
+                    "`{reference}` did not reach an item within {max_hops} hops, \
+                     still at `{last}` (cyclic?)"
                 )
             }
         }

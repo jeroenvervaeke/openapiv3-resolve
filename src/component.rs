@@ -13,6 +13,11 @@ use openapiv3::{
 /// [`ResolveError::SectionMismatch`](crate::ResolveError::SectionMismatch)
 /// rather than silently missing.
 ///
+/// Note that [`Callback`] is a transparent alias for
+/// `IndexMap<String, PathItem>` rather than a distinct type, so *any* value of
+/// that shape resolves as a callback. That is upstream's design, not a choice
+/// this crate can undo.
+///
 /// This trait is sealed: it cannot be implemented outside this crate. That
 /// keeps [`Self::SECTION`] and [`Self::section`] in agreement, and it is what
 /// makes the blanket impls on `ReferenceOr<T>` and `ReferenceOr<Box<T>>`
@@ -46,9 +51,6 @@ macro_rules! component {
 // The section name is the wire spelling, which `Components` renames from its
 // Rust field name; deriving one from the other is what made `requestBodies`
 // and `securitySchemes` unresolvable.
-// `Callback` is a transparent alias for `IndexMap<String, PathItem>`, not a
-// nominal type, so this impl claims that shape crate-wide and no second
-// meaning can ever be given to it. That is upstream's design, not ours.
 component!(Callback, Callbacks, callbacks);
 component!(Example, Examples, examples);
 component!(Header, Headers, headers);

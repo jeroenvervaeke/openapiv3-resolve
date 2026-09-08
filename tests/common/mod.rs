@@ -11,6 +11,7 @@ pub const SPEC: &str = r##"{
   "info": { "title": "Everything", "version": "1.0.0" },
   "paths": {
     "/pets": { "get": { "responses": {} } },
+    "/pets/{id}": { "get": { "responses": {} } },
     "/alias": { "$ref": "#/paths/~1pets" }
   },
   "components": {

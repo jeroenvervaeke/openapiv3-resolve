@@ -17,11 +17,12 @@ mod reference;
 
 pub use component::Component;
 pub use error::ResolveError;
-pub use reference::{ComponentRef, Section};
+pub use reference::Section;
 
 use openapiv3::{OpenAPI, ReferenceOr};
+use reference::ComponentRef;
 
-/// How many `$ref` hops a single resolution may take before giving up.
+/// How many `$ref` hops a single resolution may follow.
 ///
 /// A cyclic document has no inline item at the end of the chain, so without a
 /// bound the walk never terminates. Chains this long do not occur in practice.
@@ -39,6 +40,11 @@ pub trait Resolve {
 /// Resolves a `ReferenceOr<T>` (or its boxed variant) to the item it denotes.
 pub trait ResolveWithOpenAPI<T> {
     /// Returns the inline item, or the item the `$ref` points at.
+    ///
+    /// The result borrows from whichever of the two arguments it came from, so
+    /// its lifetime is the shorter of them: resolving out of a temporary
+    /// `ReferenceOr` yields a borrow that cannot outlive that temporary, even
+    /// when the value in fact came from `openapi`.
     fn resolve<'a>(&'a self, openapi: &'a OpenAPI) -> Result<&'a T, ResolveError>;
 }
 
@@ -64,9 +70,10 @@ impl Resolve for OpenAPI {
                 ReferenceOr::Item(item) => return Ok(item),
                 ReferenceOr::Reference { reference: next } => {
                     hops += 1;
-                    if hops >= MAX_REFERENCE_HOPS {
+                    if hops > MAX_REFERENCE_HOPS {
                         return Err(ResolveError::ReferenceChainTooLong {
                             reference: reference.to_owned(),
+                            last: next.clone(),
                             max_hops: MAX_REFERENCE_HOPS,
                         });
                     }

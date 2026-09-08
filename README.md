@@ -78,9 +78,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   resolvable `R`; `resolve_optional` returns `Ok(None)` for an absent field
   and an error only for a reference that is present but broken.
 
-Resolvable targets are the nine `#/components` sections plus `#/paths`
-(`#/paths/~1pets`, with RFC 6901 escaping). The `Component` trait that lists
-them is sealed.
+Resolvable targets are the nine `#/components` sections plus `#/paths`, listed
+by the `Section` enum. A `$ref` is read as a URI reference: the fragment is
+percent-decoded first, then RFC 6901 unescaped, so the path `/pets/{id}` is
+reachable as `#/paths/~1pets~1%7Bid%7D`.
+
+The `Component` trait that maps a Rust type to its section is sealed, so the
+two can never disagree. Note that `openapiv3::Callback` is a transparent alias
+for `IndexMap<String, PathItem>` rather than a distinct type, so any value of
+that shape resolves as a callback.
 
 ## Errors
 
@@ -96,12 +102,18 @@ a cyclic document returns an error rather than overflowing the stack.
 ## Thread safety
 
 `OpenAPI` and every resolvable component are `Send + Sync`, resolution takes
-`&self` and allocates nothing, and the returned borrow is `Send + Sync` too —
-so a resolved reference can be held across an `.await` in a `Send` future.
+`&self`, and the returned borrow is `Send + Sync` too — so a resolved reference
+can be held across an `.await` in a `Send` future.
+
+Resolving a `#/components/...` pointer allocates nothing, however long the
+reference chain. Pointers carrying an escape (`~0`, `~1`, `%XX`) are the
+exception: the decoded name has to be built. Both are pinned by a test.
 
 ## Minimum supported Rust version
 
-1.85. Bumping the MSRV is a minor version bump.
+1.85, which is the floor `indexmap` imposes rather than anything this crate
+needs, and it is checked by its own CI job. A dependency raising its MSRV
+raises this one; that is a minor version bump.
 
 ## License
 

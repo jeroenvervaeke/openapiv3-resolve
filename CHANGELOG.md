@@ -19,8 +19,11 @@ Initial release.
 - `ResolveError` reports why a reference failed — a dangling name, a reference
   into the wrong section, a pointer into another document, or a chain that
   never terminates — instead of a bare `None`.
-- Resolvable targets are the nine `#/components` sections and `#/paths`, with
-  RFC 6901 (`~0`, `~1`) unescaping.
+- Resolvable targets are the nine `#/components` sections and `#/paths`, listed
+  by `Section`. Pointers are percent-decoded as URI fragments and then RFC 6901
+  unescaped, so `#/paths/~1pets~1%7Bid%7D` names the path `/pets/{id}`.
+- `Component` maps a Rust type to its section; it is sealed so the two cannot
+  disagree.
 - Reference chains are walked iteratively and capped at `MAX_REFERENCE_HOPS`,
   so a cyclic document errors instead of overflowing the stack.
 

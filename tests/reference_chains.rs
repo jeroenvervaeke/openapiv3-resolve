@@ -31,8 +31,8 @@ fn spec(schemas: &str) -> OpenAPI {
 }
 
 #[test]
-fn resolves_the_longest_chain_that_stays_within_the_hop_limit() {
-    let openapi = chain(MAX_REFERENCE_HOPS - 1);
+fn resolves_the_longest_chain_the_hop_limit_allows() {
+    let openapi = chain(MAX_REFERENCE_HOPS);
     let schema = openapi
         .resolve_ref::<Schema>("#/components/schemas/s0")
         .expect("chain within the limit resolves");
@@ -41,13 +41,34 @@ fn resolves_the_longest_chain_that_stays_within_the_hop_limit() {
 
 #[test]
 fn gives_up_on_a_chain_one_hop_past_the_limit() {
-    let openapi = chain(MAX_REFERENCE_HOPS);
+    let openapi = chain(MAX_REFERENCE_HOPS + 1);
     assert_eq!(
         openapi.resolve_ref::<Schema>("#/components/schemas/s0"),
         Err(ResolveError::ReferenceChainTooLong {
             reference: "#/components/schemas/s0".to_owned(),
+            last: format!("#/components/schemas/s{}", MAX_REFERENCE_HOPS + 1),
             max_hops: MAX_REFERENCE_HOPS,
         })
+    );
+}
+
+#[test]
+fn reports_where_the_walk_gave_up_so_the_cycle_can_be_found() {
+    let openapi = spec(
+        r##""A": { "$ref": "#/components/schemas/B" },
+           "B": { "$ref": "#/components/schemas/A" }"##,
+    );
+    let Err(ResolveError::ReferenceChainTooLong {
+        reference, last, ..
+    }) = openapi.resolve_ref::<Schema>("#/components/schemas/A")
+    else {
+        panic!("expected the walk to give up");
+    };
+
+    assert_eq!(reference, "#/components/schemas/A");
+    assert!(
+        last == "#/components/schemas/A" || last == "#/components/schemas/B",
+        "gave up at {last}, which is not on the cycle"
     );
 }
 
