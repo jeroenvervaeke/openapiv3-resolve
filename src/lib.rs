@@ -1,39 +1,47 @@
-//! Reference resolution helpers for [`openapiv3`].
-//!
-//! This crate provides traits and implementations to resolve `$ref` pointers
-//! such as `#/components/schemas/Foo` against an [`OpenAPI`] document.
-//!
-//! ## Example
-//!
-//! ```no_run
-//! use openapiv3::OpenAPI;
-//! use openapiv3_resolve::ResolveWithOpenAPI;
-//!
-//! # fn demo(openapi: OpenAPI) -> Option<()> {
-//! let path = openapi.paths.paths.get("/pets")?.as_item()?;
-//! let response = path
-//!     .get
-//!     .as_ref()?
-//!     .responses
-//!     .responses
-//!     .get(&openapiv3::StatusCode::Code(200))?
-//!     .resolve(&openapi)?;
-//! let _ = response;
-//! # Some(())
-//! # }
-//! ```
-use indexmap::IndexMap;
-use openapiv3::*;
+#![doc = include_str!("../README.md")]
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
 
+pub use indexmap;
+pub use openapiv3;
+
+use indexmap::IndexMap;
+use openapiv3::{
+    Callback, Components, Example, Header, Link, OpenAPI, Parameter, ReferenceOr, RequestBody,
+    Response, Schema, SecurityScheme,
+};
+
+/// Resolves a full `$ref` pointer against a document root.
+///
+/// Implemented on [`OpenAPI`] for every component type, so the pointer is
+/// expected to look like `#/components/schemas/Pet`.
 pub trait Resolve<T> {
+    /// Resolves `path` to a `T`, following chains of `$ref`s.
+    ///
+    /// Returns `None` if the pointer is malformed, names a location this
+    /// crate cannot resolve, or points at an item the document does not
+    /// contain.
     fn resolve<'a>(&'a self, path: &str) -> Option<&'a T>;
 }
 
+/// Resolves a pointer that is relative to `self` rather than to the document root.
+///
+/// Implemented on [`Components`] and on `IndexMap<String, ReferenceOr<T>>`;
+/// `openapi` is threaded through so a nested `$ref` can be followed back up to
+/// the document root.
 pub trait ResolveWithOpenAPIAndPath<T> {
+    /// Resolves `path` relative to `self`, using `openapi` for nested `$ref`s.
+    ///
+    /// Returns `None` under the same conditions as [`Resolve::resolve`].
     fn resolve<'a>(&'a self, openapi: &'a OpenAPI, path: &str) -> Option<&'a T>;
 }
 
+/// Resolves a `ReferenceOr<T>` (or its boxed and optional variants) to the item it denotes.
 pub trait ResolveWithOpenAPI<T> {
+    /// Returns the inline item, or the item the `$ref` points at.
+    ///
+    /// Returns `None` if the value is absent, or if the reference cannot be
+    /// resolved (see [`Resolve::resolve`]).
     fn resolve<'a>(&'a self, openapi: &'a OpenAPI) -> Option<&'a T>;
 }
 
@@ -166,6 +174,10 @@ resolve_with_openapi_index_map!(SecurityScheme);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openapiv3::{
+        MediaType, Operation, PathItem, Paths, Responses, SchemaData, SchemaKind, StatusCode,
+        StringType, Type,
+    };
 
     #[test]
     fn resolve_index_map_schema() {

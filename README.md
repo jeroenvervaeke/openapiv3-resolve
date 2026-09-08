@@ -1,5 +1,8 @@
 # openapiv3-resolve
 
+[![crates.io](https://img.shields.io/crates/v/openapiv3-resolve.svg)](https://crates.io/crates/openapiv3-resolve)
+[![docs.rs](https://docs.rs/openapiv3-resolve/badge.svg)](https://docs.rs/openapiv3-resolve)
+
 Reference resolution helpers for the [`openapiv3`](https://crates.io/crates/openapiv3) crate.
 
 This crate adds traits that resolve `$ref` pointers (e.g.
@@ -14,9 +17,36 @@ fields such as `ArrayType::items`.
 use openapiv3::OpenAPI;
 use openapiv3_resolve::ResolveWithOpenAPI;
 
-let openapi: OpenAPI = serde_yaml::from_str(spec).unwrap();
+let spec = r##"{
+  "openapi": "3.0.0",
+  "info": { "title": "Pets", "version": "1.0.0" },
+  "paths": {
+    "/pets": {
+      "get": {
+        "responses": { "200": { "$ref": "#/components/responses/PetList" } }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "PetList": {
+        "description": "a list of pets",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } }
+        }
+      }
+    },
+    "schemas": {
+      "Pet": { "title": "Pet", "type": "string" }
+    }
+  }
+}"##;
+
+let openapi: OpenAPI = serde_json::from_str(spec).unwrap();
 
 let path = openapi.paths.paths.get("/pets").unwrap().as_item().unwrap();
+
+// `responses` holds a `ReferenceOr<Response>`; `resolve` follows the `$ref`.
 let response = path
     .get
     .as_ref()
@@ -28,6 +58,7 @@ let response = path
     .resolve(&openapi)
     .unwrap();
 
+// `schema` is an `Option<ReferenceOr<Schema>>`; `resolve` handles both.
 let schema = response
     .content
     .get("application/json")
@@ -35,6 +66,8 @@ let schema = response
     .schema
     .resolve(&openapi)
     .unwrap();
+
+assert_eq!(schema.schema_data.title.as_deref(), Some("Pet"));
 ```
 
 ## Traits
@@ -48,11 +81,14 @@ let schema = response
   `IndexMap<String, ReferenceOr<T>>`; used internally and when walking a
   pointer relative to a sub-document.
 
+Every method returns `Option`: `None` means the pointer was malformed, named
+an unsupported location, or pointed at something that is not present in the
+document.
+
+## Minimum supported Rust version
+
+1.85. Bumping the MSRV is a minor version bump.
+
 ## License
 
-Licensed under either of
-
-- Apache License, Version 2.0
-- MIT license
-
-at your option.
+Licensed under the [MIT license](https://github.com/jeroenvervaeke/openapiv3-resolve/blob/master/LICENSE).
