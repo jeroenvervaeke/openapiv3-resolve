@@ -69,6 +69,19 @@ pub enum ResolveError {
         /// The hop limit that was hit, [`crate::MAX_REFERENCE_HOPS`].
         max_hops: usize,
     },
+    /// A component other than a schema contains, directly or through other
+    /// components, a `$ref` back to itself, so it has no finite fully resolved
+    /// form. A header whose content encoding names that same header is the
+    /// one way a document can do this.
+    ///
+    /// Schemas are allowed to contain themselves; see
+    /// [`NestedSchema`](crate::NestedSchema). Only
+    /// [`ResolvedOpenAPI`](crate::ResolvedOpenAPI) reports this; borrowing
+    /// resolution stops at the first item and never notices the cycle.
+    CyclicReference {
+        /// The `$ref` that closed the cycle, as it appeared in the document.
+        reference: String,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -125,6 +138,13 @@ impl fmt::Display for ResolveError {
                     f,
                     "`{reference}` did not reach an item within {max_hops} hops, \
                      still at `{last}` (cyclic?)"
+                )
+            }
+            Self::CyclicReference { reference } => {
+                write!(
+                    f,
+                    "`{reference}` refers back to a non-schema component that contains it, \
+                     which cannot be fully resolved"
                 )
             }
         }

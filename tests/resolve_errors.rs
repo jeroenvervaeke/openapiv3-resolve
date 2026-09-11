@@ -148,6 +148,9 @@ fn every_error_renders_a_distinct_message_naming_its_cause() {
             last: "#/components/schemas/B".to_owned(),
             max_hops: 100,
         },
+        ResolveError::CyclicReference {
+            reference: "#/components/schemas/Node".to_owned(),
+        },
     ];
 
     let mut rendered: Vec<String> = Vec::new();
@@ -164,6 +167,7 @@ fn every_error_renders_a_distinct_message_naming_its_cause() {
             ResolveError::SectionMismatch { .. } => "components/responses",
             ResolveError::PointerTooDeep { reference } => reference,
             ResolveError::ReferenceChainTooLong { last, .. } => last,
+            ResolveError::CyclicReference { reference } => reference,
             _ => panic!("unhandled variant: {error:?}"),
         };
         assert!(

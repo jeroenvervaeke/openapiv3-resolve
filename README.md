@@ -88,13 +88,127 @@ two can never disagree. Note that `openapiv3::Callback` is a transparent alias
 for `IndexMap<String, PathItem>` rather than a distinct type, so any value of
 that shape resolves as a callback.
 
+## Resolving a whole document
+
+`ResolvedOpenAPI` is the document with every `$ref` followed up front: a
+mirror of `openapiv3::OpenAPI` in which each `ReferenceOr<T>` has become a
+`Shared<ResolvedT>` (or `Shared<T>` for `Example`, `Link` and
+`SecurityScheme`, which hold no references). `Shared` dereferences to the
+item. Every reference to the same component shares one allocation, so
+`Shared::as_ptr` tells whether two sites named the same component, and
+`components` holds those same allocations.
+
+```rust
+use openapiv3::OpenAPI;
+use openapiv3_resolve::{ResolvedOpenAPI, ResolvedParameterSchemaOrContent, Shared};
+use std::ptr;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let spec = r##"{
+      "openapi": "3.0.0",
+      "info": { "title": "Pets", "version": "1.0.0" },
+      "paths": {
+        "/pets": {
+          "get": {
+            "parameters": [ { "$ref": "#/components/parameters/Limit" } ],
+            "responses": {}
+          }
+        }
+      },
+      "components": {
+        "parameters": {
+          "Limit": {
+            "name": "limit", "in": "query",
+            "schema": { "$ref": "#/components/schemas/Limit" }
+          }
+        },
+        "schemas": { "Limit": { "type": "integer" } }
+      }
+    }"##;
+
+    let openapi: OpenAPI = serde_json::from_str(spec)?;
+    let resolved = ResolvedOpenAPI::try_from(&openapi)?;
+
+    let get = resolved.paths().paths["/pets"].get.as_ref().ok_or("no GET")?;
+    let limit = get.parameters.first().ok_or("no parameter")?;
+    let ResolvedParameterSchemaOrContent::Schema(schema) = &limit.parameter_data().format else {
+        return Err("limit has content, not a schema".into());
+    };
+
+    let components = resolved.components().ok_or("no components")?;
+    assert!(ptr::eq(Shared::as_ptr(limit), Shared::as_ptr(&components.parameters["Limit"])));
+    assert!(ptr::eq(Shared::as_ptr(schema), Shared::as_ptr(&components.schemas["Limit"])));
+    Ok(())
+}
+```
+
+Resolution fails on the first reference that does not resolve, with the same
+`ResolveError` the borrowing traits return.
+
+### Recursive schemas
+
+A schema nested inside another schema is a `NestedSchema`; `get()` borrows
+it. Nearly always that is a schema like any other. The exception is a `$ref`
+that points back at a schema which contains it (a tree node whose children
+are nodes, say): that edge `is_recursive()`, and holds only a weak pointer,
+because a cycle of owning pointers would never be freed. `get()` still just
+works, because the target lives in `components` and the edge can only be
+reached by borrowing from the document.
+
+That guarantee is why the document is only ever borrowed from: its fields are
+behind getters, and `Shared` is not `Clone`, so no piece of it can outlive
+the whole. Put the document in an `Arc` to share it.
+
+```rust
+use openapiv3::OpenAPI;
+use openapiv3_resolve::{ResolvedOpenAPI, ResolvedSchemaKind, ResolvedType};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let spec = r##"{
+      "openapi": "3.0.0",
+      "info": { "title": "Trees", "version": "1.0.0" },
+      "paths": {},
+      "components": {
+        "schemas": {
+          "Node": {
+            "title": "Node",
+            "type": "object",
+            "properties": { "next": { "$ref": "#/components/schemas/Node" } }
+          }
+        }
+      }
+    }"##;
+
+    let openapi: OpenAPI = serde_json::from_str(spec)?;
+    let resolved = ResolvedOpenAPI::try_from(&openapi)?;
+
+    let node = &resolved.components().ok_or("no components")?.schemas["Node"];
+    let ResolvedSchemaKind::Type(ResolvedType::Object(object)) = &node.schema_kind else {
+        return Err("Node is not an object".into());
+    };
+
+    let next = &object.properties["next"];
+    assert!(next.is_recursive());
+    // `get` borrows the target; no `Option`, no match.
+    assert_eq!(next.get().schema_data.title.as_deref(), Some("Node"));
+    Ok(())
+}
+```
+
+Which edge of a cycle is the recursive one is decided by document order: the
+first `$ref`, walking `components` then `paths`, that closes the cycle. A
+component that contains itself in any other way (a header whose content
+encoding names that same header is the only one a document can express) has
+no finite tree form and fails with `CyclicReference`.
+
 ## Errors
 
 Every failure is a distinct [`ResolveError`](https://docs.rs/openapiv3-resolve/latest/openapiv3_resolve/enum.ResolveError.html) variant, so a caller can tell a
 typo in the document (`NotFound`, `SectionMismatch`) from a reference this
 crate structurally does not follow (`ExternalDocument`, `PointerTooDeep`) from
-a document that is broken (`ReferenceChainTooLong`, which is what a cycle
-looks like).
+a document that is broken (`ReferenceChainTooLong`, which is what a cycle of
+bare `$ref`s looks like, and `CyclicReference` for a non-schema component
+that contains itself, which only a full resolution can detect).
 
 Reference chains are walked iteratively and capped at `MAX_REFERENCE_HOPS`, so
 a cyclic document returns an error rather than overflowing the stack.
