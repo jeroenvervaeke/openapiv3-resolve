@@ -31,9 +31,11 @@ impl TryFrom<&OpenAPI> for ResolvedOpenAPI {
 
     /// Resolves every `$ref` in the document.
     ///
-    /// Fails with the first reference that does not resolve, or with
-    /// [`ResolveError::CyclicReference`] if a component contains a reference
-    /// back to itself: such a document has no finite tree form.
+    /// Fails with the first reference that does not resolve. A schema that
+    /// contains a reference back to itself is fine, and comes out with a
+    /// [`NestedSchema::Recursive`] edge; any other component that contains
+    /// itself has no finite tree form and fails with
+    /// [`ResolveError::CyclicReference`].
     fn try_from(openapi: &OpenAPI) -> Result<Self, Self::Error> {
         openapi.resolve_inline(&mut Resolver::new(openapi))
     }

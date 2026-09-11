@@ -143,8 +143,8 @@ impl fmt::Display for ResolveError {
             Self::CyclicReference { reference } => {
                 write!(
                     f,
-                    "`{reference}` refers back to a component that contains it; \
-                     a cyclic document cannot be fully resolved"
+                    "`{reference}` refers back to a non-schema component that contains it, \
+                     which cannot be fully resolved"
                 )
             }
         }

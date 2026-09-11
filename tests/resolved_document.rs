@@ -570,6 +570,71 @@ fn a_cycle_through_another_schema_is_recursive_only_where_it_closes() {
 }
 
 #[test]
+fn every_nested_position_can_point_back_at_its_own_schema() {
+    let resolved = resolve(&with_schemas(
+        r##""Object": { "type": "object",
+                        "additionalProperties": { "$ref": "#/components/schemas/Object" } },
+            "OneOf": { "oneOf": [ { "$ref": "#/components/schemas/OneOf" } ] },
+            "AllOf": { "allOf": [ { "$ref": "#/components/schemas/AllOf" } ] },
+            "AnyOf": { "anyOf": [ { "$ref": "#/components/schemas/AnyOf" } ] },
+            "Not": { "not": { "$ref": "#/components/schemas/Not" } },
+            "Any": { "properties": { "p": { "$ref": "#/components/schemas/Any" } },
+                     "additionalProperties": { "$ref": "#/components/schemas/Any" },
+                     "items": { "$ref": "#/components/schemas/Any" },
+                     "oneOf": [ { "$ref": "#/components/schemas/Any" } ],
+                     "allOf": [ { "$ref": "#/components/schemas/Any" } ],
+                     "anyOf": [ { "$ref": "#/components/schemas/Any" } ],
+                     "not": { "$ref": "#/components/schemas/Any" } }"##,
+    ));
+    let back_to = |name: &str, edge: &NestedSchema| {
+        assert!(edge.is_recursive(), "{name}");
+        assert!(
+            Arc::ptr_eq(&edge.upgrade().expect("alive"), schema(&resolved, name)),
+            "{name}"
+        );
+    };
+    match &schema(&resolved, "Object").schema_kind {
+        ResolvedSchemaKind::Type(ResolvedType::Object(object)) => {
+            let Some(ResolvedAdditionalProperties::Schema(edge)) = &object.additional_properties
+            else {
+                panic!("Object has additional properties");
+            };
+            back_to("Object", edge);
+        }
+        other => panic!("Object resolved to {other:?}"),
+    }
+    match &schema(&resolved, "OneOf").schema_kind {
+        ResolvedSchemaKind::OneOf { one_of } => back_to("OneOf", &one_of[0]),
+        other => panic!("OneOf resolved to {other:?}"),
+    }
+    match &schema(&resolved, "AllOf").schema_kind {
+        ResolvedSchemaKind::AllOf { all_of } => back_to("AllOf", &all_of[0]),
+        other => panic!("AllOf resolved to {other:?}"),
+    }
+    match &schema(&resolved, "AnyOf").schema_kind {
+        ResolvedSchemaKind::AnyOf { any_of } => back_to("AnyOf", &any_of[0]),
+        other => panic!("AnyOf resolved to {other:?}"),
+    }
+    match &schema(&resolved, "Not").schema_kind {
+        ResolvedSchemaKind::Not { not } => back_to("Not", not),
+        other => panic!("Not resolved to {other:?}"),
+    }
+    let ResolvedSchemaKind::Any(any) = &schema(&resolved, "Any").schema_kind else {
+        panic!("Any is untyped");
+    };
+    back_to("Any", &any.properties["p"]);
+    let Some(ResolvedAdditionalProperties::Schema(additional)) = &any.additional_properties else {
+        panic!("Any has additional properties");
+    };
+    back_to("Any", additional);
+    back_to("Any", any.items.as_ref().expect("items"));
+    back_to("Any", &any.one_of[0]);
+    back_to("Any", &any.all_of[0]);
+    back_to("Any", &any.any_of[0]);
+    back_to("Any", any.not.as_ref().expect("not"));
+}
+
+#[test]
 fn which_edge_is_recursive_follows_document_order() {
     let resolved = resolve(&with_schemas(
         r##""B": { "type": "array", "items": { "$ref": "#/components/schemas/A" } },
@@ -581,9 +646,10 @@ fn which_edge_is_recursive_follows_document_order() {
 }
 
 #[test]
-fn a_recursive_schema_first_reached_from_outside_components_schemas_still_closes() {
-    // `Node` is first reached through a parameter, not through the schemas
-    // section, so it is under construction while its own `next` is resolved.
+fn a_parameter_naming_a_recursive_schema_shares_its_arc() {
+    // Schemas are resolved before any other section, so `Node` is already
+    // done when the parameter reaches it and the parameter's edge is a plain
+    // shared `Arc`, not a recursive one.
     let resolved = resolve(&parse(
         r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},"paths":{},
             "components":{
