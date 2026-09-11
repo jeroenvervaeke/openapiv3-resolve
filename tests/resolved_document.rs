@@ -561,6 +561,22 @@ fn a_schema_that_contains_itself_gets_a_recursive_edge_back_to_itself() {
 }
 
 #[test]
+fn many_guards_on_one_recursive_edge_can_be_held_at_once() {
+    let resolved = resolve(&with_schemas(
+        r##""Node": { "type": "object",
+                      "properties": { "next": { "$ref": "#/components/schemas/Node" } } }"##,
+    ));
+    let node = schema(&resolved, "Node");
+    let next = property(node, "next");
+    let guards: Vec<SchemaGuard<'_>> = (0..1000).map(|_| next.get()).collect();
+    assert!(guards
+        .iter()
+        .all(|guard| ptr::eq(SchemaGuard::as_ptr(guard), Shared::as_ptr(node))));
+    drop(guards);
+    assert!(points_at(next, node));
+}
+
+#[test]
 fn a_cycle_through_another_schema_is_recursive_only_where_it_closes() {
     // Resolved in document order: A first, so the edge from B back to A is
     // the one that finds A still under construction.
