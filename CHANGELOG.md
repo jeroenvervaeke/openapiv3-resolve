@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1](https://github.com/jeroenvervaeke/openapiv3-resolve/compare/v0.1.0...v0.1.1) - 2026-09-11
+
+### Features
+
+- resolve a whole document into a reference-free tree ([#6](https://github.com/jeroenvervaeke/openapiv3-resolve/pull/6))
+
 ## [0.1.0](https://github.com/jeroenvervaeke/openapiv3-resolve/releases/tag/v0.1.0) - 2026-09-11
 
 ### Bug Fixes
