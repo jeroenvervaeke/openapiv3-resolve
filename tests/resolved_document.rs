@@ -649,10 +649,10 @@ fn which_edge_is_recursive_follows_document_order() {
 }
 
 #[test]
-fn a_parameter_naming_a_recursive_schema_shares_its_arc() {
+fn a_parameter_naming_a_recursive_schema_shares_it() {
     // Schemas are resolved before any other section, so `Node` is already
     // done when the parameter reaches it and the parameter's edge is a plain
-    // shared `Arc`, not a recursive one.
+    // shared one, not a recursive one.
     let resolved = resolve(&parse(
         r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},"paths":{},
             "components":{

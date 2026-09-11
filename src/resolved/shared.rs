@@ -10,11 +10,11 @@ use std::sync::{Arc, Weak};
 /// document: that is what lets a [`NestedSchema`] be dereferenced without a
 /// check, however the schemas refer to each other.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0277
 /// use openapiv3_resolve::{ResolvedSchema, Shared};
 ///
 /// fn detach(shared: &Shared<ResolvedSchema>) -> Shared<ResolvedSchema> {
-///     shared.clone()
+///     Clone::clone(shared)
 /// }
 /// ```
 pub struct Shared<T>(Arc<T>);

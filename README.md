@@ -159,6 +159,42 @@ That guarantee is why the document is only ever borrowed from: its fields are
 behind getters, and `Shared` is not `Clone`, so no piece of it can outlive
 the whole. Put the document in an `Arc` to share it.
 
+```rust
+use openapiv3::OpenAPI;
+use openapiv3_resolve::{ResolvedOpenAPI, ResolvedSchemaKind, ResolvedType};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let spec = r##"{
+      "openapi": "3.0.0",
+      "info": { "title": "Trees", "version": "1.0.0" },
+      "paths": {},
+      "components": {
+        "schemas": {
+          "Node": {
+            "title": "Node",
+            "type": "object",
+            "properties": { "next": { "$ref": "#/components/schemas/Node" } }
+          }
+        }
+      }
+    }"##;
+
+    let openapi: OpenAPI = serde_json::from_str(spec)?;
+    let resolved = ResolvedOpenAPI::try_from(&openapi)?;
+
+    let node = &resolved.components().ok_or("no components")?.schemas["Node"];
+    let ResolvedSchemaKind::Type(ResolvedType::Object(object)) = &node.schema_kind else {
+        return Err("Node is not an object".into());
+    };
+
+    let next = &object.properties["next"];
+    assert!(next.is_recursive());
+    // `get` borrows the target; no `Option`, no match.
+    assert_eq!(next.get().schema_data.title.as_deref(), Some("Node"));
+    Ok(())
+}
+```
+
 Which edge of a cycle is the recursive one is decided by document order: the
 first `$ref`, walking `components` then `paths`, that closes the cycle. A
 component that contains itself in any other way (a header whose content
