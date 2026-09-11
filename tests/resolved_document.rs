@@ -372,6 +372,48 @@ fn resolves_references_nested_inside_an_untyped_schema() {
 }
 
 #[test]
+fn keeps_a_boolean_additional_properties() {
+    let resolved = resolve(&with_schemas(
+        r##""Open": { "type": "object", "additionalProperties": true },
+            "Closed": { "type": "object", "additionalProperties": false }"##,
+    ));
+    let additional = |name: &str| match &schema(&resolved, name).schema_kind {
+        ResolvedSchemaKind::Type(ResolvedType::Object(object)) => {
+            object.additional_properties.clone()
+        }
+        other => panic!("{name} resolved to {other:?}"),
+    };
+    assert_eq!(
+        additional("Open"),
+        Some(ResolvedAdditionalProperties::Any(true))
+    );
+    assert_eq!(
+        additional("Closed"),
+        Some(ResolvedAdditionalProperties::Any(false))
+    );
+}
+
+#[test]
+fn resolves_a_header_described_by_content() {
+    let resolved = resolve(&parse(
+        r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},"paths":{},
+            "components":{
+              "schemas":{"Pet":{"type":"string"}},
+              "headers":{"X-Pet":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Pet"}}}}}
+            }}"##,
+    ));
+    let components = resolved.components.as_ref().expect("components");
+    let ResolvedParameterSchemaOrContent::Content(content) = &components.headers["X-Pet"].format
+    else {
+        panic!("X-Pet has content");
+    };
+    assert!(Arc::ptr_eq(
+        content["application/json"].schema.as_ref().expect("schema"),
+        &components.schemas["Pet"]
+    ));
+}
+
+#[test]
 fn inline_items_are_kept_and_not_shared() {
     let resolved = resolve(&with_schemas(
         r##""A": { "type": "array", "items": { "title": "inline", "type": "string" } },
@@ -458,7 +500,7 @@ fn a_dangling_reference_fails_the_whole_document() {
 }
 
 #[test]
-fn a_reference_without_components_to_look_in_is_an_error() {
+fn a_reference_into_the_wrong_section_is_an_error() {
     let error = ResolvedOpenAPI::try_from(&parse(
         r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},
             "paths":{"/pets":{"$ref":"#/components/schemas/Pet"}}}"##,
@@ -469,6 +511,21 @@ fn a_reference_without_components_to_look_in_is_an_error() {
         ResolveError::SectionMismatch {
             expected: Section::Paths,
             found: Section::Schemas
+        }
+    );
+}
+
+#[test]
+fn a_reference_without_components_to_look_in_is_an_error() {
+    let error = ResolvedOpenAPI::try_from(&parse(
+        r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},
+            "paths":{"/pets":{"get":{"responses":{"200":{"$ref":"#/components/responses/Ok"}}}}}}"##,
+    ))
+    .expect_err("no components");
+    assert_eq!(
+        error,
+        ResolveError::ComponentsMissing {
+            section: Section::Responses
         }
     );
 }
