@@ -76,4 +76,6 @@ fn a_resolved_document_is_send_and_sync() {
 #[test]
 fn a_nested_schema_edge_is_send_and_sync() {
     assert_send_sync::<openapiv3_resolve::NestedSchema>();
+    assert_send_sync::<openapiv3_resolve::Shared<openapiv3_resolve::ResolvedSchema>>();
+    assert_send_sync::<openapiv3_resolve::SchemaGuard<'_>>();
 }

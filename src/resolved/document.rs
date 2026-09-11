@@ -1,81 +1,94 @@
 use super::resolver::{Resolvable, Resolver};
-use super::{
-    ResolvedHeader, ResolvedOperation, ResolvedParameter, ResolvedRequestBody, ResolvedResponse,
-    ResolvedSchema,
-};
+use super::{ResolvedComponents, ResolvedOperation, ResolvedParameter, Shared};
 use crate::ResolveError;
 use indexmap::IndexMap;
 use openapiv3::{
-    Callback, Components, Example, ExternalDocumentation, Info, Link, OpenAPI, Operation, PathItem,
-    Paths, SecurityRequirement, SecurityScheme, Server, Tag,
+    Callback, ExternalDocumentation, Info, OpenAPI, Operation, PathItem, Paths,
+    SecurityRequirement, Server, Tag,
 };
-use std::sync::Arc;
 
 /// [`OpenAPI`] with every `$ref` in the document replaced by the item it named.
 ///
 /// Built with [`TryFrom<&OpenAPI>`](#impl-TryFrom<%26OpenAPI>-for-ResolvedOpenAPI).
-/// Every reference to the same component resolves to the same `Arc`, so
-/// [`Arc::ptr_eq`] tells whether two sites named the same component, and the
-/// entries of [`components`](Self::components) are those very `Arc`s.
-#[derive(Debug, Clone, PartialEq)]
+/// Every reference to the same component resolves to the same [`Shared`]
+/// allocation, so [`Shared::as_ptr`] tells whether two sites named the same
+/// component, and the entries of [`components`](Self::components) are those
+/// very allocations. The document is only ever borrowed from, never taken
+/// apart; see [`Shared`] for why.
+#[derive(Debug, PartialEq)]
 pub struct ResolvedOpenAPI {
-    /// See [`OpenAPI::openapi`].
-    pub openapi: String,
-    /// See [`OpenAPI::info`].
-    pub info: Info,
-    /// See [`OpenAPI::servers`].
-    pub servers: Vec<Server>,
-    /// See [`OpenAPI::paths`].
-    pub paths: ResolvedPaths,
-    /// See [`OpenAPI::components`].
-    pub components: Option<ResolvedComponents>,
-    /// See [`OpenAPI::security`].
-    pub security: Option<Vec<SecurityRequirement>>,
-    /// See [`OpenAPI::tags`].
-    pub tags: Vec<Tag>,
-    /// See [`OpenAPI::external_docs`].
-    pub external_docs: Option<ExternalDocumentation>,
-    /// See [`OpenAPI::extensions`].
-    pub extensions: IndexMap<String, serde_json::Value>,
+    openapi: String,
+    info: Info,
+    servers: Vec<Server>,
+    paths: ResolvedPaths,
+    components: Option<ResolvedComponents>,
+    security: Option<Vec<SecurityRequirement>>,
+    tags: Vec<Tag>,
+    external_docs: Option<ExternalDocumentation>,
+    extensions: IndexMap<String, serde_json::Value>,
 }
 
-/// [`Components`] with every entry resolved, including entries that were
-/// themselves a `$ref` to another entry.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ResolvedComponents {
-    /// See [`Components::schemas`].
-    pub schemas: IndexMap<String, Arc<ResolvedSchema>>,
-    /// See [`Components::responses`].
-    pub responses: IndexMap<String, Arc<ResolvedResponse>>,
-    /// See [`Components::parameters`].
-    pub parameters: IndexMap<String, Arc<ResolvedParameter>>,
-    /// See [`Components::examples`].
-    pub examples: IndexMap<String, Arc<Example>>,
-    /// See [`Components::request_bodies`].
-    pub request_bodies: IndexMap<String, Arc<ResolvedRequestBody>>,
-    /// See [`Components::headers`].
-    pub headers: IndexMap<String, Arc<ResolvedHeader>>,
-    /// See [`Components::security_schemes`].
-    pub security_schemes: IndexMap<String, Arc<SecurityScheme>>,
-    /// See [`Components::links`].
-    pub links: IndexMap<String, Arc<Link>>,
-    /// See [`Components::callbacks`].
-    pub callbacks: IndexMap<String, Arc<ResolvedCallback>>,
-    /// See [`Components::extensions`].
-    pub extensions: IndexMap<String, serde_json::Value>,
+// The fields are private so that no part of the document can be moved out
+// of it: every recursive schema edge relies on its target staying in
+// `components` for as long as anything borrowed from the document exists.
+impl ResolvedOpenAPI {
+    /// See [`OpenAPI::openapi`].
+    pub fn openapi(&self) -> &str {
+        &self.openapi
+    }
+
+    /// See [`OpenAPI::info`].
+    pub fn info(&self) -> &Info {
+        &self.info
+    }
+
+    /// See [`OpenAPI::servers`].
+    pub fn servers(&self) -> &[Server] {
+        &self.servers
+    }
+
+    /// See [`OpenAPI::paths`].
+    pub fn paths(&self) -> &ResolvedPaths {
+        &self.paths
+    }
+
+    /// See [`OpenAPI::components`].
+    pub fn components(&self) -> Option<&ResolvedComponents> {
+        self.components.as_ref()
+    }
+
+    /// See [`OpenAPI::security`].
+    pub fn security(&self) -> Option<&[SecurityRequirement]> {
+        self.security.as_deref()
+    }
+
+    /// See [`OpenAPI::tags`].
+    pub fn tags(&self) -> &[Tag] {
+        &self.tags
+    }
+
+    /// See [`OpenAPI::external_docs`].
+    pub fn external_docs(&self) -> Option<&ExternalDocumentation> {
+        self.external_docs.as_ref()
+    }
+
+    /// See [`OpenAPI::extensions`].
+    pub fn extensions(&self) -> &IndexMap<String, serde_json::Value> {
+        &self.extensions
+    }
 }
 
 /// [`Paths`] with every `$ref` replaced by the path item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedPaths {
     /// See [`Paths::paths`].
-    pub paths: IndexMap<String, Arc<ResolvedPathItem>>,
+    pub paths: IndexMap<String, Shared<ResolvedPathItem>>,
     /// See [`Paths::extensions`].
     pub extensions: IndexMap<String, serde_json::Value>,
 }
 
 /// [`PathItem`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedPathItem {
     /// See [`PathItem::summary`].
     pub summary: Option<String>,
@@ -100,7 +113,7 @@ pub struct ResolvedPathItem {
     /// See [`PathItem::servers`].
     pub servers: Vec<Server>,
     /// See [`PathItem::parameters`].
-    pub parameters: Vec<Arc<ResolvedParameter>>,
+    pub parameters: Vec<Shared<ResolvedParameter>>,
     /// See [`PathItem::extensions`].
     pub extensions: IndexMap<String, serde_json::Value>,
 }
@@ -145,25 +158,6 @@ impl Resolvable for OpenAPI {
             security: self.security.clone(),
             tags: self.tags.clone(),
             external_docs: self.external_docs.clone(),
-            extensions: self.extensions.clone(),
-        })
-    }
-}
-
-impl Resolvable for Components {
-    type Resolved = ResolvedComponents;
-
-    fn resolve_inline(&self, cx: &mut Resolver<'_>) -> Result<Self::Resolved, ResolveError> {
-        Ok(ResolvedComponents {
-            schemas: cx.section(&self.schemas)?,
-            responses: cx.section(&self.responses)?,
-            parameters: cx.section(&self.parameters)?,
-            examples: cx.section(&self.examples)?,
-            request_bodies: cx.section(&self.request_bodies)?,
-            headers: cx.section(&self.headers)?,
-            security_schemes: cx.section(&self.security_schemes)?,
-            links: cx.section(&self.links)?,
-            callbacks: cx.section(&self.callbacks)?,
             extensions: self.extensions.clone(),
         })
     }

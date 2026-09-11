@@ -1,5 +1,5 @@
 use super::cache::{Cached, Caches, Slot};
-use super::NestedSchema;
+use super::{NestedSchema, Shared};
 use crate::reference::escape;
 use crate::{walk, ResolveError};
 use indexmap::IndexMap;
@@ -35,7 +35,11 @@ impl<'a> Resolver<'a> {
     pub(super) fn inline<T: Resolvable>(
         &mut self,
         item: &T,
-    ) -> Result<Arc<T::Resolved>, ResolveError> {
+    ) -> Result<Shared<T::Resolved>, ResolveError> {
+        self.inline_arc(item).map(Shared::new)
+    }
+
+    fn inline_arc<T: Resolvable>(&mut self, item: &T) -> Result<Arc<T::Resolved>, ResolveError> {
         item.resolve_inline(self).map(Arc::new)
     }
 
@@ -44,10 +48,10 @@ impl<'a> Resolver<'a> {
     pub(super) fn reference<T: Cached>(
         &mut self,
         reference: &str,
-    ) -> Result<Arc<T::Resolved>, ResolveError> {
+    ) -> Result<Shared<T::Resolved>, ResolveError> {
         let (name, item) = walk::<T>(self.openapi, reference)?;
         match self.slot::<T>(&name, item)? {
-            Slot::Done(resolved) => Ok(resolved),
+            Slot::Done(resolved) => Ok(Shared::new(resolved)),
             Slot::InProgress(_) => Err(ResolveError::CyclicReference {
                 reference: reference.to_owned(),
             }),
@@ -57,7 +61,7 @@ impl<'a> Resolver<'a> {
     pub(super) fn ref_or<T: Cached>(
         &mut self,
         entry: &ReferenceOr<T>,
-    ) -> Result<Arc<T::Resolved>, ResolveError> {
+    ) -> Result<Shared<T::Resolved>, ResolveError> {
         match entry {
             ReferenceOr::Item(item) => self.inline(item),
             ReferenceOr::Reference { reference } => self.reference::<T>(reference),
@@ -67,14 +71,14 @@ impl<'a> Resolver<'a> {
     pub(super) fn ref_or_vec<T: Cached>(
         &mut self,
         entries: &[ReferenceOr<T>],
-    ) -> Result<Vec<Arc<T::Resolved>>, ResolveError> {
+    ) -> Result<Vec<Shared<T::Resolved>>, ResolveError> {
         entries.iter().map(|entry| self.ref_or(entry)).collect()
     }
 
     pub(super) fn ref_or_map<K, T>(
         &mut self,
         entries: &IndexMap<K, ReferenceOr<T>>,
-    ) -> Result<IndexMap<K, Arc<T::Resolved>>, ResolveError>
+    ) -> Result<IndexMap<K, Shared<T::Resolved>>, ResolveError>
     where
         K: Clone + Hash + Eq,
         T: Cached,
@@ -92,13 +96,15 @@ impl<'a> Resolver<'a> {
         entry: &ReferenceOr<S>,
     ) -> Result<NestedSchema, ResolveError> {
         let reference = match entry {
-            ReferenceOr::Item(item) => return self.inline(item.borrow()).map(NestedSchema::Schema),
+            ReferenceOr::Item(item) => {
+                return self.inline_arc(item.borrow()).map(NestedSchema::schema)
+            }
             ReferenceOr::Reference { reference } => reference,
         };
         let (name, item) = walk::<Schema>(self.openapi, reference)?;
         Ok(match self.slot::<Schema>(&name, item)? {
-            Slot::Done(resolved) => NestedSchema::Schema(resolved),
-            Slot::InProgress(weak) => NestedSchema::Recursive(weak),
+            Slot::Done(resolved) => NestedSchema::schema(resolved),
+            Slot::InProgress(weak) => NestedSchema::recursive(weak),
         })
     }
 
@@ -125,7 +131,7 @@ impl<'a> Resolver<'a> {
     pub(super) fn section<T: Cached>(
         &mut self,
         entries: &IndexMap<String, ReferenceOr<T>>,
-    ) -> Result<IndexMap<String, Arc<T::Resolved>>, ResolveError> {
+    ) -> Result<IndexMap<String, Shared<T::Resolved>>, ResolveError> {
         entries
             .iter()
             .map(|(name, entry)| {
@@ -147,9 +153,9 @@ impl<'a> Resolver<'a> {
         name: &str,
         item: &T,
         reference: &str,
-    ) -> Result<Arc<T::Resolved>, ResolveError> {
+    ) -> Result<Shared<T::Resolved>, ResolveError> {
         match self.slot::<T>(name, item)? {
-            Slot::Done(resolved) => Ok(resolved),
+            Slot::Done(resolved) => Ok(Shared::new(resolved)),
             Slot::InProgress(_) => Err(ResolveError::CyclicReference {
                 reference: reference.to_owned(),
             }),

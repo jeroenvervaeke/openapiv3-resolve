@@ -7,7 +7,7 @@ use openapiv3::{
 };
 
 /// [`Type`] with every `$ref` replaced by the schema it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ResolvedType {
     /// See [`Type::String`].
     String(StringType),
@@ -24,7 +24,7 @@ pub enum ResolvedType {
 }
 
 /// [`ObjectType`] with every `$ref` replaced by the schema it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedObjectType {
     /// See [`ObjectType::properties`].
     pub properties: IndexMap<String, NestedSchema>,
@@ -39,7 +39,7 @@ pub struct ResolvedObjectType {
 }
 
 /// [`ArrayType`] with a `$ref` in `items` replaced by the schema it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedArrayType {
     /// See [`ArrayType::items`].
     pub items: Option<NestedSchema>,
@@ -52,7 +52,7 @@ pub struct ResolvedArrayType {
 }
 
 /// [`AnySchema`] with every `$ref` replaced by the schema it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedAnySchema {
     /// See [`AnySchema::typ`].
     pub typ: Option<String>,

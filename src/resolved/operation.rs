@@ -1,14 +1,13 @@
 use super::resolver::{Resolvable, Resolver};
-use super::{ResolvedCallback, ResolvedParameter, ResolvedRequestBody, ResolvedResponse};
+use super::{ResolvedCallback, ResolvedParameter, ResolvedRequestBody, ResolvedResponse, Shared};
 use crate::ResolveError;
 use indexmap::IndexMap;
 use openapiv3::{
     ExternalDocumentation, Operation, Responses, SecurityRequirement, Server, StatusCode,
 };
-use std::sync::Arc;
 
 /// [`Operation`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedOperation {
     /// See [`Operation::tags`].
     pub tags: Vec<String>,
@@ -21,9 +20,9 @@ pub struct ResolvedOperation {
     /// See [`Operation::operation_id`].
     pub operation_id: Option<String>,
     /// See [`Operation::parameters`].
-    pub parameters: Vec<Arc<ResolvedParameter>>,
+    pub parameters: Vec<Shared<ResolvedParameter>>,
     /// See [`Operation::request_body`].
-    pub request_body: Option<Arc<ResolvedRequestBody>>,
+    pub request_body: Option<Shared<ResolvedRequestBody>>,
     /// See [`Operation::responses`].
     pub responses: ResolvedResponses,
     /// See [`Operation::callbacks`].
@@ -39,12 +38,12 @@ pub struct ResolvedOperation {
 }
 
 /// [`Responses`] with every `$ref` replaced by the response it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedResponses {
     /// See [`Responses::default`].
-    pub default: Option<Arc<ResolvedResponse>>,
+    pub default: Option<Shared<ResolvedResponse>>,
     /// See [`Responses::responses`].
-    pub responses: IndexMap<StatusCode, Arc<ResolvedResponse>>,
+    pub responses: IndexMap<StatusCode, Shared<ResolvedResponse>>,
     /// See [`Responses::extensions`].
     pub extensions: IndexMap<String, serde_json::Value>,
 }

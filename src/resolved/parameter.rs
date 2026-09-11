@@ -1,15 +1,14 @@
 use super::resolver::{Resolvable, Resolver};
-use super::{ResolvedMediaType, ResolvedSchema};
+use super::{ResolvedMediaType, ResolvedSchema, Shared};
 use crate::ResolveError;
 use indexmap::IndexMap;
 use openapiv3::{
     CookieStyle, Example, Header, HeaderStyle, Parameter, ParameterData, ParameterSchemaOrContent,
     PathStyle, QueryStyle,
 };
-use std::sync::Arc;
 
 /// [`Parameter`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ResolvedParameter {
     /// See [`Parameter::Query`].
     Query {
@@ -58,7 +57,7 @@ impl ResolvedParameter {
 }
 
 /// [`ParameterData`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedParameterData {
     /// See [`ParameterData::name`].
     pub name: String,
@@ -73,7 +72,7 @@ pub struct ResolvedParameterData {
     /// See [`ParameterData::example`].
     pub example: Option<serde_json::Value>,
     /// See [`ParameterData::examples`].
-    pub examples: IndexMap<String, Arc<Example>>,
+    pub examples: IndexMap<String, Shared<Example>>,
     /// See [`ParameterData::explode`].
     pub explode: Option<bool>,
     /// See [`ParameterData::extensions`].
@@ -81,16 +80,16 @@ pub struct ResolvedParameterData {
 }
 
 /// [`ParameterSchemaOrContent`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ResolvedParameterSchemaOrContent {
     /// See [`ParameterSchemaOrContent::Schema`].
-    Schema(Arc<ResolvedSchema>),
+    Schema(Shared<ResolvedSchema>),
     /// See [`ParameterSchemaOrContent::Content`].
     Content(IndexMap<String, ResolvedMediaType>),
 }
 
 /// [`Header`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedHeader {
     /// See [`Header::description`].
     pub description: Option<String>,
@@ -105,7 +104,7 @@ pub struct ResolvedHeader {
     /// See [`Header::example`].
     pub example: Option<serde_json::Value>,
     /// See [`Header::examples`].
-    pub examples: IndexMap<String, Arc<Example>>,
+    pub examples: IndexMap<String, Shared<Example>>,
     /// See [`Header::extensions`].
     pub extensions: IndexMap<String, serde_json::Value>,
 }

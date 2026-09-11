@@ -103,7 +103,7 @@ impl Cached for Schema {
 
     /// Schemas may contain themselves, so the allocation is created first and
     /// its `Weak` published before the contents are resolved; a `$ref` back to
-    /// this schema then becomes a `NestedSchema::Recursive` edge to it.
+    /// this schema then becomes a recursive `NestedSchema` edge to it.
     fn resolve_shared(
         cx: &mut Resolver<'_>,
         name: &str,

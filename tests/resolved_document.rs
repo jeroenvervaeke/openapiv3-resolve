@@ -6,9 +6,10 @@ use common::spec;
 use openapiv3::{OpenAPI, StatusCode};
 use openapiv3_resolve::{
     NestedSchema, ResolveError, ResolvedAdditionalProperties, ResolvedOpenAPI, ResolvedParameter,
-    ResolvedParameterSchemaOrContent, ResolvedSchema, ResolvedSchemaKind, ResolvedType, Section,
+    ResolvedParameterSchemaOrContent, ResolvedSchema, ResolvedSchemaKind, ResolvedType,
+    SchemaGuard, Section, Shared,
 };
-use std::sync::Arc;
+use std::ptr;
 
 fn parse(document: &str) -> OpenAPI {
     serde_json::from_str(document).expect("fixture spec parses")
@@ -25,10 +26,9 @@ fn resolve(openapi: &OpenAPI) -> ResolvedOpenAPI {
     ResolvedOpenAPI::try_from(openapi).expect("document resolves")
 }
 
-fn schema<'a>(resolved: &'a ResolvedOpenAPI, name: &str) -> &'a Arc<ResolvedSchema> {
+fn schema<'a>(resolved: &'a ResolvedOpenAPI, name: &str) -> &'a Shared<ResolvedSchema> {
     resolved
-        .components
-        .as_ref()
+        .components()
         .expect("has components")
         .schemas
         .get(name)
@@ -39,9 +39,19 @@ fn title(schema: &ResolvedSchema) -> Option<&str> {
     schema.schema_data.title.as_deref()
 }
 
+/// Whether two shared values are the very same allocation.
+fn shares<T>(left: &Shared<T>, right: &Shared<T>) -> bool {
+    ptr::eq(Shared::as_ptr(left), Shared::as_ptr(right))
+}
+
 /// Whether `nested` is a plain (non-recursive) edge to exactly `schema`.
-fn same(nested: &NestedSchema, schema: &Arc<ResolvedSchema>) -> bool {
-    matches!(nested, NestedSchema::Schema(inner) if Arc::ptr_eq(inner, schema))
+fn same(nested: &NestedSchema, schema: &Shared<ResolvedSchema>) -> bool {
+    !nested.is_recursive() && points_at(nested, schema)
+}
+
+/// Whether `nested` leads to exactly `schema`, recursive or not.
+fn points_at(nested: &NestedSchema, schema: &Shared<ResolvedSchema>) -> bool {
+    ptr::eq(SchemaGuard::as_ptr(&nested.get()), Shared::as_ptr(schema))
 }
 
 fn items(schema: &ResolvedSchema) -> &NestedSchema {
@@ -148,7 +158,7 @@ const SITES: &str = r##"{
 #[test]
 fn resolves_every_section_of_the_shared_fixture() {
     let resolved = resolve(&spec());
-    let components = resolved.components.as_ref().expect("has components");
+    let components = resolved.components().expect("has components");
 
     assert_eq!(components.schemas.len(), 2);
     assert_eq!(components.responses.len(), 2);
@@ -159,133 +169,127 @@ fn resolves_every_section_of_the_shared_fixture() {
     assert_eq!(components.security_schemes.len(), 2);
     assert_eq!(components.links.len(), 2);
     assert_eq!(components.callbacks.len(), 2);
-    assert_eq!(resolved.paths.paths.len(), 3);
+    assert_eq!(resolved.paths().paths.len(), 3);
 }
 
 #[test]
 fn a_component_that_is_itself_a_reference_shares_its_target() {
     let resolved = resolve(&spec());
-    let components = resolved.components.as_ref().expect("has components");
+    let components = resolved.components().expect("has components");
 
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         schema(&resolved, "PetAlias"),
         schema(&resolved, "Pet")
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.responses["PetListAlias"],
         &components.responses["PetList"]
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.parameters["LimitAlias"],
         &components.parameters["Limit"]
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.examples["OneAlias"],
         &components.examples["One"]
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.request_bodies["CreatePetAlias"],
         &components.request_bodies["CreatePet"]
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.headers["XRateAlias"],
         &components.headers["XRate"]
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.security_schemes["ApiKeyAlias"],
         &components.security_schemes["ApiKey"]
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.links["SelfAlias"],
         &components.links["Self"]
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.callbacks["OnEventAlias"],
         &components.callbacks["OnEvent"]
     ));
-    assert!(Arc::ptr_eq(
-        &resolved.paths.paths["/alias"],
-        &resolved.paths.paths["/pets"]
+    assert!(shares(
+        &resolved.paths().paths["/alias"],
+        &resolved.paths().paths["/pets"]
     ));
 }
 
 #[test]
 fn every_reference_site_shares_the_component_it_names() {
     let resolved = resolve(&parse(SITES));
-    let components = resolved.components.as_ref().expect("has components");
+    let components = resolved.components().expect("has components");
     let pet = &components.schemas["Pet"];
     let limit = &components.parameters["Limit"];
     let pet_list = &components.responses["PetList"];
     let x_rate = &components.headers["XRate"];
     let one = &components.examples["One"];
 
-    let pets = &resolved.paths.paths["/pets"];
+    let pets = &resolved.paths().paths["/pets"];
     let get = pets.get.as_ref().expect("GET /pets");
-    assert!(Arc::ptr_eq(&pets.parameters[0], limit));
-    assert!(Arc::ptr_eq(&get.parameters[0], limit));
-    assert!(Arc::ptr_eq(
+    assert!(shares(&pets.parameters[0], limit));
+    assert!(shares(&get.parameters[0], limit));
+    assert!(shares(
         get.request_body.as_ref().expect("body"),
         &components.request_bodies["CreatePet"]
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         get.responses.default.as_ref().expect("default"),
         pet_list
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &get.responses.responses[&StatusCode::Code(200)],
         pet_list
     ));
 
     let created = &get.responses.responses[&StatusCode::Code(201)];
-    assert!(Arc::ptr_eq(&created.headers["X-Rate"], x_rate));
-    assert!(Arc::ptr_eq(
-        &created.links["self"],
-        &components.links["Self"]
-    ));
+    assert!(shares(&created.headers["X-Rate"], x_rate));
+    assert!(shares(&created.links["self"], &components.links["Self"]));
     let media = &created.content["application/json"];
-    assert!(Arc::ptr_eq(media.schema.as_ref().expect("schema"), pet));
-    assert!(Arc::ptr_eq(&media.examples["one"], one));
-    assert!(Arc::ptr_eq(
-        &media.encoding["field"].headers["X-Rate"],
-        x_rate
-    ));
+    assert!(shares(media.schema.as_ref().expect("schema"), pet));
+    assert!(shares(&media.examples["one"], one));
+    assert!(shares(&media.encoding["field"].headers["X-Rate"], x_rate));
 
     let callback_post = get.callbacks["onEvent"]["{$request.body#/url}"]
         .post
         .as_ref()
         .expect("callback POST");
-    assert!(Arc::ptr_eq(&callback_post.parameters[0], limit));
-    assert!(Arc::ptr_eq(
+    assert!(shares(&callback_post.parameters[0], limit));
+    assert!(shares(
         &callback_post.responses.responses[&StatusCode::Code(200)],
         pet_list
     ));
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         &components.callbacks["OnEvent"]["{$request.body#/url}"].parameters[0],
         limit
     ));
 
     let body = &pet_list.content["application/json"];
-    assert!(Arc::ptr_eq(body.schema.as_ref().expect("schema"), pet));
+    assert!(shares(body.schema.as_ref().expect("schema"), pet));
     let ResolvedParameterSchemaOrContent::Schema(limit_schema) = &limit.parameter_data().format
     else {
         panic!("Limit has a schema");
     };
-    assert!(Arc::ptr_eq(limit_schema, pet));
-    assert!(Arc::ptr_eq(&limit.parameter_data().examples["one"], one));
+    assert!(shares(limit_schema, pet));
+    assert!(shares(&limit.parameter_data().examples["one"], one));
     let ResolvedParameterSchemaOrContent::Content(content) =
         &components.parameters["Body"].parameter_data().format
     else {
         panic!("Body has content");
     };
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         content["application/json"].schema.as_ref().expect("schema"),
         pet
     ));
     let ResolvedParameterSchemaOrContent::Schema(header_schema) = &x_rate.format else {
         panic!("XRate has a schema");
     };
-    assert!(Arc::ptr_eq(header_schema, pet));
-    assert!(Arc::ptr_eq(&x_rate.examples["one"], one));
+    assert!(shares(header_schema, pet));
+    assert!(shares(&x_rate.examples["one"], one));
 }
 
 #[test]
@@ -299,7 +303,7 @@ fn keeps_every_kind_of_parameter() {
               "c": {"name":"c","in":"cookie","schema":{}}
             }}}"##,
     ));
-    let parameters = &resolved.components.as_ref().expect("components").parameters;
+    let parameters = &resolved.components().expect("components").parameters;
     assert!(matches!(*parameters["q"], ResolvedParameter::Query { .. }));
     assert!(matches!(*parameters["h"], ResolvedParameter::Header { .. }));
     assert!(matches!(*parameters["p"], ResolvedParameter::Path { .. }));
@@ -393,18 +397,16 @@ fn keeps_a_boolean_additional_properties() {
             "Closed": { "type": "object", "additionalProperties": false }"##,
     ));
     let additional = |name: &str| match &schema(&resolved, name).schema_kind {
-        ResolvedSchemaKind::Type(ResolvedType::Object(object)) => {
-            object.additional_properties.clone()
-        }
+        ResolvedSchemaKind::Type(ResolvedType::Object(object)) => &object.additional_properties,
         other => panic!("{name} resolved to {other:?}"),
     };
     assert_eq!(
         additional("Open"),
-        Some(ResolvedAdditionalProperties::Any(true))
+        &Some(ResolvedAdditionalProperties::Any(true))
     );
     assert_eq!(
         additional("Closed"),
-        Some(ResolvedAdditionalProperties::Any(false))
+        &Some(ResolvedAdditionalProperties::Any(false))
     );
 }
 
@@ -417,12 +419,12 @@ fn resolves_a_header_described_by_content() {
               "headers":{"X-Pet":{"content":{"application/json":{"schema":{"$ref":"#/components/schemas/Pet"}}}}}
             }}"##,
     ));
-    let components = resolved.components.as_ref().expect("components");
+    let components = resolved.components().expect("components");
     let ResolvedParameterSchemaOrContent::Content(content) = &components.headers["X-Pet"].format
     else {
         panic!("X-Pet has content");
     };
-    assert!(Arc::ptr_eq(
+    assert!(shares(
         content["application/json"].schema.as_ref().expect("schema"),
         &components.schemas["Pet"]
     ));
@@ -434,10 +436,11 @@ fn inline_items_are_kept_and_not_shared() {
         r##""A": { "type": "array", "items": { "title": "inline", "type": "string" } },
             "B": { "type": "array", "items": { "title": "inline", "type": "string" } }"##,
     ));
-    let items = |name: &str| items(schema(&resolved, name)).upgrade().expect("upgrades");
-    assert_eq!(title(&items("A")), Some("inline"));
-    assert_eq!(items("A"), items("B"));
-    assert!(!Arc::ptr_eq(&items("A"), &items("B")));
+    let a = items(schema(&resolved, "A")).get();
+    let b = items(schema(&resolved, "B")).get();
+    assert_eq!(title(&a), Some("inline"));
+    assert_eq!(*a, *b);
+    assert!(!ptr::eq(SchemaGuard::as_ptr(&a), SchemaGuard::as_ptr(&b)));
 }
 
 #[test]
@@ -448,8 +451,8 @@ fn a_chain_of_references_resolves_to_the_item_at_its_end() {
             "C": { "title": "end", "type": "string" }"##,
     ));
     assert_eq!(title(schema(&resolved, "A")), Some("end"));
-    assert!(Arc::ptr_eq(schema(&resolved, "A"), schema(&resolved, "C")));
-    assert!(Arc::ptr_eq(schema(&resolved, "B"), schema(&resolved, "C")));
+    assert!(shares(schema(&resolved, "A"), schema(&resolved, "C")));
+    assert!(shares(schema(&resolved, "B"), schema(&resolved, "C")));
 }
 
 #[test]
@@ -457,8 +460,8 @@ fn a_document_without_components_resolves_to_none() {
     let resolved = resolve(&parse(
         r#"{"openapi":"3.0.0","info":{"title":"t","version":"1"},"paths":{}}"#,
     ));
-    assert_eq!(resolved.components, None);
-    assert!(resolved.paths.paths.is_empty());
+    assert_eq!(resolved.components(), None);
+    assert!(resolved.paths().paths.is_empty());
 }
 
 #[test]
@@ -469,11 +472,11 @@ fn a_document_without_references_copies_over_unchanged() {
             "tags":[{"name":"pets"}],"x-root":true}"##,
     );
     let resolved = resolve(&openapi);
-    assert_eq!(resolved.openapi, openapi.openapi);
-    assert_eq!(resolved.info, openapi.info);
-    assert_eq!(resolved.tags, openapi.tags);
-    assert_eq!(resolved.extensions, openapi.extensions);
-    let get = resolved.paths.paths["/pets"].get.as_ref().expect("GET");
+    assert_eq!(resolved.openapi(), openapi.openapi);
+    assert_eq!(resolved.info(), &openapi.info);
+    assert_eq!(resolved.tags(), openapi.tags);
+    assert_eq!(resolved.extensions(), &openapi.extensions);
+    let get = resolved.paths().paths["/pets"].get.as_ref().expect("GET");
     assert_eq!(get.operation_id.as_deref(), Some("list"));
     assert_eq!(
         get.responses.responses[&StatusCode::Code(200)].description,
@@ -487,7 +490,7 @@ fn a_path_item_lists_its_operations_in_method_order() {
         r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},
             "paths":{"/pets":{"post":{"responses":{}},"get":{"responses":{}},"delete":{"responses":{}}}}}"##,
     ));
-    let methods: Vec<&str> = resolved.paths.paths["/pets"]
+    let methods: Vec<&str> = resolved.paths().paths["/pets"]
         .iter()
         .map(|(method, _)| method)
         .collect();
@@ -549,9 +552,12 @@ fn a_schema_that_contains_itself_gets_a_recursive_edge_back_to_itself() {
     let node = schema(&resolved, "Node");
     let next = property(node, "next");
     assert!(next.is_recursive());
-    let upgraded = next.upgrade().expect("document is alive");
-    assert!(Arc::ptr_eq(&upgraded, node));
-    assert_eq!(title(&upgraded), Some("Node"));
+    assert!(points_at(next, node));
+    assert_eq!(title(&next.get()), Some("Node"));
+    // Dereferencing keeps working however deep the recursion goes.
+    let once = next.get();
+    let twice = property(&once, "next").get();
+    assert!(ptr::eq(SchemaGuard::as_ptr(&twice), Shared::as_ptr(node)));
 }
 
 #[test]
@@ -566,7 +572,7 @@ fn a_cycle_through_another_schema_is_recursive_only_where_it_closes() {
     let b = schema(&resolved, "B");
     assert!(same(items(a), b));
     assert!(items(b).is_recursive());
-    assert!(Arc::ptr_eq(&items(b).upgrade().expect("alive"), a));
+    assert!(points_at(items(b), a));
 }
 
 #[test]
@@ -588,10 +594,7 @@ fn every_nested_position_can_point_back_at_its_own_schema() {
     ));
     let back_to = |name: &str, edge: &NestedSchema| {
         assert!(edge.is_recursive(), "{name}");
-        assert!(
-            Arc::ptr_eq(&edge.upgrade().expect("alive"), schema(&resolved, name)),
-            "{name}"
-        );
+        assert!(points_at(edge, schema(&resolved, name)), "{name}");
     };
     match &schema(&resolved, "Object").schema_kind {
         ResolvedSchemaKind::Type(ResolvedType::Object(object)) => {
@@ -657,44 +660,34 @@ fn a_parameter_naming_a_recursive_schema_shares_its_arc() {
               "schemas":{"Node":{"type":"object","properties":{"next":{"$ref":"#/components/schemas/Node"}}}}
             }}"##,
     ));
-    let components = resolved.components.as_ref().expect("components");
+    let components = resolved.components().expect("components");
     let node = &components.schemas["Node"];
     let ResolvedParameterSchemaOrContent::Schema(from_parameter) =
         &components.parameters["n"].parameter_data().format
     else {
         panic!("n has a schema");
     };
-    assert!(Arc::ptr_eq(from_parameter, node));
-    assert!(Arc::ptr_eq(
-        &property(node, "next").upgrade().expect("alive"),
-        node
-    ));
+    assert!(shares(from_parameter, node));
+    assert!(points_at(property(node, "next"), node));
 }
 
 #[test]
-fn a_recursive_edge_dangles_once_its_target_is_dropped() {
-    let resolved = resolve(&with_schemas(
-        r##""A": { "type": "array", "items": { "$ref": "#/components/schemas/B" } },
-            "B": { "type": "array", "items": { "$ref": "#/components/schemas/A" } }"##,
-    ));
-    let b = items(schema(&resolved, "A")).upgrade().expect("alive");
-    drop(resolved);
-    // `A` was only owned by the document; `B` is kept alive by this test.
-    assert_eq!(items(&b).upgrade(), None);
-}
-
-#[test]
-fn a_recursive_document_can_be_printed_compared_and_cloned() {
+fn a_recursive_document_can_be_printed_and_compared() {
     let openapi = with_schemas(
         r##""Node": { "type": "object",
                       "properties": { "next": { "$ref": "#/components/schemas/Node" } } }"##,
     );
     let resolved = resolve(&openapi);
     let printed = format!("{resolved:?}");
-    assert!(printed.contains("Recursive"), "{printed}");
-    assert_eq!(resolved, resolved.clone());
+    assert!(printed.contains("Recursive(..)"), "{printed}");
     // Recursive edges compare by identity, so a second resolution differs.
     assert_ne!(resolved, resolve(&openapi));
+}
+
+#[test]
+fn two_resolutions_of_an_acyclic_document_are_equal() {
+    let openapi = spec();
+    assert_eq!(resolve(&openapi), resolve(&openapi));
 }
 
 #[test]

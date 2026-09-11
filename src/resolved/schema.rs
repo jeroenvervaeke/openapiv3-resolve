@@ -1,11 +1,10 @@
 use super::resolver::{Resolvable, Resolver};
-use super::{ResolvedAnySchema, ResolvedType};
+use super::{NestedSchema, ResolvedAnySchema, ResolvedType};
 use crate::ResolveError;
 use openapiv3::{AdditionalProperties, Schema, SchemaData, SchemaKind};
-use std::sync::{Arc, Weak};
 
 /// [`Schema`] with every `$ref` replaced by the schema it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedSchema {
     /// See [`Schema::schema_data`].
     pub schema_data: SchemaData,
@@ -13,59 +12,8 @@ pub struct ResolvedSchema {
     pub schema_kind: ResolvedSchemaKind,
 }
 
-/// A schema nested inside another schema.
-///
-/// Nearly always [`Schema`](Self::Schema). The exception is a `$ref` that
-/// points back at a schema which contains it (a tree node whose children
-/// are nodes, say): that edge is [`Recursive`](Self::Recursive) and holds a
-/// [`Weak`], because a cycle of `Arc`s would never be freed. Which edge of a
-/// cycle is the recursive one is decided by document order: it is the first
-/// `$ref` met, walking `components` then `paths`, that closes the cycle.
-///
-/// A recursive edge upgrades for as long as the schema it points at is alive,
-/// which is guaranteed while the [`ResolvedOpenAPI`](crate::ResolvedOpenAPI)
-/// is, since `components` holds every schema a `$ref` can name.
-///
-/// Two recursive edges are equal when they point at the same allocation, so
-/// comparing two independently resolved documents that contain a cycle
-/// reports them as different.
-#[derive(Debug, Clone)]
-pub enum NestedSchema {
-    /// The nested schema itself, inline or shared with other references to it.
-    Schema(Arc<ResolvedSchema>),
-    /// A schema that contains this edge, so it is still under construction.
-    Recursive(Weak<ResolvedSchema>),
-}
-
-impl NestedSchema {
-    /// The nested schema, or `None` if this is a recursive edge whose target
-    /// has been dropped.
-    pub fn upgrade(&self) -> Option<Arc<ResolvedSchema>> {
-        match self {
-            Self::Schema(schema) => Some(Arc::clone(schema)),
-            Self::Recursive(schema) => schema.upgrade(),
-        }
-    }
-
-    /// Whether this edge points back at a schema that contains it.
-    pub fn is_recursive(&self) -> bool {
-        matches!(self, Self::Recursive(_))
-    }
-}
-
-impl PartialEq for NestedSchema {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Schema(left), Self::Schema(right)) => left == right,
-            // Comparing contents here would never terminate.
-            (Self::Recursive(left), Self::Recursive(right)) => Weak::ptr_eq(left, right),
-            (Self::Schema(_), Self::Recursive(_)) | (Self::Recursive(_), Self::Schema(_)) => false,
-        }
-    }
-}
-
 /// [`SchemaKind`] with every `$ref` replaced by the schema it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ResolvedSchemaKind {
     /// See [`SchemaKind::Type`].
     Type(ResolvedType),
@@ -94,7 +42,7 @@ pub enum ResolvedSchemaKind {
 }
 
 /// [`AdditionalProperties`] with a `$ref` replaced by the schema it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ResolvedAdditionalProperties {
     /// See [`AdditionalProperties::Any`].
     Any(bool),

@@ -91,16 +91,17 @@ that shape resolves as a callback.
 ## Resolving a whole document
 
 `ResolvedOpenAPI` is the document with every `$ref` followed up front: a
-mirror of `openapiv3::OpenAPI` in which each `ReferenceOr<T>` has become an
-`Arc<ResolvedT>` (or `Arc<T>` for `Example`, `Link` and `SecurityScheme`,
-which hold no references). Every reference to the same component shares one
-`Arc`, so `Arc::ptr_eq` tells whether two sites named the same component, and
-`components` holds those same `Arc`s.
+mirror of `openapiv3::OpenAPI` in which each `ReferenceOr<T>` has become a
+`Shared<ResolvedT>` (or `Shared<T>` for `Example`, `Link` and
+`SecurityScheme`, which hold no references). `Shared` dereferences to the
+item. Every reference to the same component shares one allocation, so
+`Shared::as_ptr` tells whether two sites named the same component, and
+`components` holds those same allocations.
 
 ```rust
 use openapiv3::OpenAPI;
-use openapiv3_resolve::{ResolvedOpenAPI, ResolvedParameterSchemaOrContent};
-use std::sync::Arc;
+use openapiv3_resolve::{ResolvedOpenAPI, ResolvedParameterSchemaOrContent, Shared};
+use std::ptr;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let spec = r##"{
@@ -128,15 +129,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let openapi: OpenAPI = serde_json::from_str(spec)?;
     let resolved = ResolvedOpenAPI::try_from(&openapi)?;
 
-    let get = resolved.paths.paths["/pets"].get.as_ref().ok_or("no GET")?;
+    let get = resolved.paths().paths["/pets"].get.as_ref().ok_or("no GET")?;
     let limit = get.parameters.first().ok_or("no parameter")?;
     let ResolvedParameterSchemaOrContent::Schema(schema) = &limit.parameter_data().format else {
         return Err("limit has content, not a schema".into());
     };
 
-    let components = resolved.components.as_ref().ok_or("no components")?;
-    assert!(Arc::ptr_eq(limit, &components.parameters["Limit"]));
-    assert!(Arc::ptr_eq(schema, &components.schemas["Limit"]));
+    let components = resolved.components().ok_or("no components")?;
+    assert!(ptr::eq(Shared::as_ptr(limit), Shared::as_ptr(&components.parameters["Limit"])));
+    assert!(ptr::eq(Shared::as_ptr(schema), Shared::as_ptr(&components.schemas["Limit"])));
     Ok(())
 }
 ```
@@ -146,13 +147,17 @@ Resolution fails on the first reference that does not resolve, with the same
 
 ### Recursive schemas
 
-A schema nested inside another schema is a `NestedSchema`, which is
-`Schema(Arc<ResolvedSchema>)` except where a `$ref` points back at a schema
-that contains it: a tree node whose children are nodes, say. That edge is
-`Recursive(Weak<ResolvedSchema>)`, because a cycle of `Arc`s would never be
-freed. `upgrade()` turns either variant into an `Arc`, and succeeds for a
-recursive edge as long as the document (or the schema it points at) is alive.
-`is_recursive()` tells a code generator where the indirection goes.
+A schema nested inside another schema is a `NestedSchema`; `get()` borrows
+it. Nearly always that is a schema like any other. The exception is a `$ref`
+that points back at a schema which contains it (a tree node whose children
+are nodes, say): that edge `is_recursive()`, and holds only a weak pointer,
+because a cycle of owning pointers would never be freed. `get()` still just
+works, because the target lives in `components` and the edge can only be
+reached by borrowing from the document.
+
+That guarantee is why the document is only ever borrowed from: its fields are
+behind getters, and `Shared` is not `Clone`, so no piece of it can outlive
+the whole. Put the document in an `Arc` to share it.
 
 Which edge of a cycle is the recursive one is decided by document order: the
 first `$ref`, walking `components` then `paths`, that closes the cycle. A

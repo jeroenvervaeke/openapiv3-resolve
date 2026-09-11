@@ -1,12 +1,11 @@
 use super::resolver::{Resolvable, Resolver};
-use super::{ResolvedHeader, ResolvedSchema};
+use super::{ResolvedHeader, ResolvedSchema, Shared};
 use crate::ResolveError;
 use indexmap::IndexMap;
 use openapiv3::{Encoding, Example, Link, MediaType, QueryStyle, RequestBody, Response};
-use std::sync::Arc;
 
 /// [`RequestBody`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedRequestBody {
     /// See [`RequestBody::description`].
     pub description: Option<String>,
@@ -19,29 +18,29 @@ pub struct ResolvedRequestBody {
 }
 
 /// [`Response`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedResponse {
     /// See [`Response::description`].
     pub description: String,
     /// See [`Response::headers`].
-    pub headers: IndexMap<String, Arc<ResolvedHeader>>,
+    pub headers: IndexMap<String, Shared<ResolvedHeader>>,
     /// See [`Response::content`].
     pub content: IndexMap<String, ResolvedMediaType>,
     /// See [`Response::links`].
-    pub links: IndexMap<String, Arc<Link>>,
+    pub links: IndexMap<String, Shared<Link>>,
     /// See [`Response::extensions`].
     pub extensions: IndexMap<String, serde_json::Value>,
 }
 
 /// [`MediaType`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedMediaType {
     /// See [`MediaType::schema`].
-    pub schema: Option<Arc<ResolvedSchema>>,
+    pub schema: Option<Shared<ResolvedSchema>>,
     /// See [`MediaType::example`].
     pub example: Option<serde_json::Value>,
     /// See [`MediaType::examples`].
-    pub examples: IndexMap<String, Arc<Example>>,
+    pub examples: IndexMap<String, Shared<Example>>,
     /// See [`MediaType::encoding`].
     pub encoding: IndexMap<String, ResolvedEncoding>,
     /// See [`MediaType::extensions`].
@@ -49,12 +48,12 @@ pub struct ResolvedMediaType {
 }
 
 /// [`Encoding`] with every `$ref` replaced by the item it named.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ResolvedEncoding {
     /// See [`Encoding::content_type`].
     pub content_type: Option<String>,
     /// See [`Encoding::headers`].
-    pub headers: IndexMap<String, Arc<ResolvedHeader>>,
+    pub headers: IndexMap<String, Shared<ResolvedHeader>>,
     /// See [`Encoding::style`].
     pub style: Option<QueryStyle>,
     /// See [`Encoding::explode`].
