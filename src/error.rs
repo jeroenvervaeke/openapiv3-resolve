@@ -69,10 +69,14 @@ pub enum ResolveError {
         /// The hop limit that was hit, [`crate::MAX_REFERENCE_HOPS`].
         max_hops: usize,
     },
-    /// A component contains, directly or through other components, a `$ref`
-    /// back to itself, so it has no finite fully resolved form.
+    /// A component other than a schema contains, directly or through other
+    /// components, a `$ref` back to itself, so it has no finite fully resolved
+    /// form. A header whose content encoding names that same header is the
+    /// one way a document can do this.
     ///
-    /// Only [`ResolvedOpenAPI`](crate::ResolvedOpenAPI) reports this; borrowing
+    /// Schemas are allowed to contain themselves; see
+    /// [`NestedSchema`](crate::NestedSchema). Only
+    /// [`ResolvedOpenAPI`](crate::ResolvedOpenAPI) reports this; borrowing
     /// resolution stops at the first item and never notices the cycle.
     CyclicReference {
         /// The `$ref` that closed the cycle, as it appeared in the document.

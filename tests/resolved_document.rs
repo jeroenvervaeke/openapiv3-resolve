@@ -5,7 +5,7 @@ mod common;
 use common::spec;
 use openapiv3::{OpenAPI, StatusCode};
 use openapiv3_resolve::{
-    ResolveError, ResolvedAdditionalProperties, ResolvedOpenAPI, ResolvedParameter,
+    NestedSchema, ResolveError, ResolvedAdditionalProperties, ResolvedOpenAPI, ResolvedParameter,
     ResolvedParameterSchemaOrContent, ResolvedSchema, ResolvedSchemaKind, ResolvedType, Section,
 };
 use std::sync::Arc;
@@ -37,6 +37,27 @@ fn schema<'a>(resolved: &'a ResolvedOpenAPI, name: &str) -> &'a Arc<ResolvedSche
 
 fn title(schema: &ResolvedSchema) -> Option<&str> {
     schema.schema_data.title.as_deref()
+}
+
+/// Whether `nested` is a plain (non-recursive) edge to exactly `schema`.
+fn same(nested: &NestedSchema, schema: &Arc<ResolvedSchema>) -> bool {
+    matches!(nested, NestedSchema::Schema(inner) if Arc::ptr_eq(inner, schema))
+}
+
+fn items(schema: &ResolvedSchema) -> &NestedSchema {
+    match &schema.schema_kind {
+        ResolvedSchemaKind::Type(ResolvedType::Array(array)) => {
+            array.items.as_ref().expect("has items")
+        }
+        other => panic!("not an array: {other:?}"),
+    }
+}
+
+fn property<'a>(schema: &'a ResolvedSchema, name: &str) -> &'a NestedSchema {
+    match &schema.schema_kind {
+        ResolvedSchemaKind::Type(ResolvedType::Object(object)) => &object.properties[name],
+        other => panic!("not an object: {other:?}"),
+    }
 }
 
 /// A document exercising every reference site outside `components/schemas`.
@@ -308,19 +329,13 @@ fn resolves_references_nested_inside_typed_schemas() {
     else {
         panic!("Object is an object");
     };
-    assert!(Arc::ptr_eq(&object.properties["pet"], pet));
+    assert!(same(&object.properties["pet"], pet));
     let Some(ResolvedAdditionalProperties::Schema(additional)) = &object.additional_properties
     else {
         panic!("Object has additional properties");
     };
-    assert!(Arc::ptr_eq(additional, pet));
-
-    let ResolvedSchemaKind::Type(ResolvedType::Array(array)) =
-        &schema(&resolved, "Array").schema_kind
-    else {
-        panic!("Array is an array");
-    };
-    assert!(Arc::ptr_eq(array.items.as_ref().expect("items"), pet));
+    assert!(same(additional, pet));
+    assert!(same(items(schema(&resolved, "Array")), pet));
 
     for (name, expected) in [
         ("OneOf", "one_of"),
@@ -333,13 +348,13 @@ fn resolves_references_nested_inside_typed_schemas() {
             ResolvedSchemaKind::AnyOf { any_of } if expected == "any_of" => any_of,
             other => panic!("{name} resolved to {other:?}"),
         };
-        assert!(Arc::ptr_eq(&alternatives[0], pet), "{name}");
+        assert!(same(&alternatives[0], pet), "{name}");
     }
 
     let ResolvedSchemaKind::Not { not } = &schema(&resolved, "Not").schema_kind else {
         panic!("Not is a negation");
     };
-    assert!(Arc::ptr_eq(not, pet));
+    assert!(same(not, pet));
 }
 
 #[test]
@@ -359,16 +374,16 @@ fn resolves_references_nested_inside_an_untyped_schema() {
     let ResolvedSchemaKind::Any(any) = &schema(&resolved, "Any").schema_kind else {
         panic!("Any is untyped");
     };
-    assert!(Arc::ptr_eq(&any.properties["pet"], pet));
+    assert!(same(&any.properties["pet"], pet));
     let Some(ResolvedAdditionalProperties::Schema(additional)) = &any.additional_properties else {
         panic!("Any has additional properties");
     };
-    assert!(Arc::ptr_eq(additional, pet));
-    assert!(Arc::ptr_eq(any.items.as_ref().expect("items"), pet));
-    assert!(Arc::ptr_eq(&any.one_of[0], pet));
-    assert!(Arc::ptr_eq(&any.all_of[0], pet));
-    assert!(Arc::ptr_eq(&any.any_of[0], pet));
-    assert!(Arc::ptr_eq(any.not.as_ref().expect("not"), pet));
+    assert!(same(additional, pet));
+    assert!(same(any.items.as_ref().expect("items"), pet));
+    assert!(same(&any.one_of[0], pet));
+    assert!(same(&any.all_of[0], pet));
+    assert!(same(&any.any_of[0], pet));
+    assert!(same(any.not.as_ref().expect("not"), pet));
 }
 
 #[test]
@@ -419,12 +434,7 @@ fn inline_items_are_kept_and_not_shared() {
         r##""A": { "type": "array", "items": { "title": "inline", "type": "string" } },
             "B": { "type": "array", "items": { "title": "inline", "type": "string" } }"##,
     ));
-    let items = |name: &str| match &schema(&resolved, name).schema_kind {
-        ResolvedSchemaKind::Type(ResolvedType::Array(array)) => {
-            Arc::clone(array.items.as_ref().expect("items"))
-        }
-        other => panic!("{name} resolved to {other:?}"),
-    };
+    let items = |name: &str| items(schema(&resolved, name)).upgrade().expect("upgrades");
     assert_eq!(title(&items("A")), Some("inline"));
     assert_eq!(items("A"), items("B"));
     assert!(!Arc::ptr_eq(&items("A"), &items("B")));
@@ -531,31 +541,127 @@ fn a_reference_without_components_to_look_in_is_an_error() {
 }
 
 #[test]
-fn a_schema_that_contains_itself_is_a_cycle() {
-    let error = ResolvedOpenAPI::try_from(&with_schemas(
+fn a_schema_that_contains_itself_gets_a_recursive_edge_back_to_itself() {
+    let resolved = resolve(&with_schemas(
+        r##""Node": { "title": "Node", "type": "object",
+                      "properties": { "next": { "$ref": "#/components/schemas/Node" } } }"##,
+    ));
+    let node = schema(&resolved, "Node");
+    let next = property(node, "next");
+    assert!(next.is_recursive());
+    let upgraded = next.upgrade().expect("document is alive");
+    assert!(Arc::ptr_eq(&upgraded, node));
+    assert_eq!(title(&upgraded), Some("Node"));
+}
+
+#[test]
+fn a_cycle_through_another_schema_is_recursive_only_where_it_closes() {
+    // Resolved in document order: A first, so the edge from B back to A is
+    // the one that finds A still under construction.
+    let resolved = resolve(&with_schemas(
+        r##""A": { "type": "array", "items": { "$ref": "#/components/schemas/B" } },
+            "B": { "type": "array", "items": { "$ref": "#/components/schemas/A" } }"##,
+    ));
+    let a = schema(&resolved, "A");
+    let b = schema(&resolved, "B");
+    assert!(same(items(a), b));
+    assert!(items(b).is_recursive());
+    assert!(Arc::ptr_eq(&items(b).upgrade().expect("alive"), a));
+}
+
+#[test]
+fn which_edge_is_recursive_follows_document_order() {
+    let resolved = resolve(&with_schemas(
+        r##""B": { "type": "array", "items": { "$ref": "#/components/schemas/A" } },
+            "A": { "type": "array", "items": { "$ref": "#/components/schemas/B" } }"##,
+    ));
+    // `B` comes first, so it is under construction when `A` refers back to it.
+    assert!(items(schema(&resolved, "A")).is_recursive());
+    assert!(!items(schema(&resolved, "B")).is_recursive());
+}
+
+#[test]
+fn a_recursive_schema_first_reached_from_outside_components_schemas_still_closes() {
+    // `Node` is first reached through a parameter, not through the schemas
+    // section, so it is under construction while its own `next` is resolved.
+    let resolved = resolve(&parse(
+        r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},"paths":{},
+            "components":{
+              "parameters":{"n":{"name":"n","in":"query","schema":{"$ref":"#/components/schemas/Node"}}},
+              "schemas":{"Node":{"type":"object","properties":{"next":{"$ref":"#/components/schemas/Node"}}}}
+            }}"##,
+    ));
+    let components = resolved.components.as_ref().expect("components");
+    let node = &components.schemas["Node"];
+    let ResolvedParameterSchemaOrContent::Schema(from_parameter) =
+        &components.parameters["n"].parameter_data().format
+    else {
+        panic!("n has a schema");
+    };
+    assert!(Arc::ptr_eq(from_parameter, node));
+    assert!(Arc::ptr_eq(
+        &property(node, "next").upgrade().expect("alive"),
+        node
+    ));
+}
+
+#[test]
+fn a_recursive_edge_dangles_once_its_target_is_dropped() {
+    let resolved = resolve(&with_schemas(
+        r##""A": { "type": "array", "items": { "$ref": "#/components/schemas/B" } },
+            "B": { "type": "array", "items": { "$ref": "#/components/schemas/A" } }"##,
+    ));
+    let b = items(schema(&resolved, "A")).upgrade().expect("alive");
+    drop(resolved);
+    // `A` was only owned by the document; `B` is kept alive by this test.
+    assert_eq!(items(&b).upgrade(), None);
+}
+
+#[test]
+fn a_recursive_document_can_be_printed_compared_and_cloned() {
+    let openapi = with_schemas(
         r##""Node": { "type": "object",
                       "properties": { "next": { "$ref": "#/components/schemas/Node" } } }"##,
+    );
+    let resolved = resolve(&openapi);
+    let printed = format!("{resolved:?}");
+    assert!(printed.contains("Recursive"), "{printed}");
+    assert_eq!(resolved, resolved.clone());
+    // Recursive edges compare by identity, so a second resolution differs.
+    assert_ne!(resolved, resolve(&openapi));
+}
+
+#[test]
+fn a_header_that_contains_itself_is_a_cycle() {
+    // The one non-schema cycle a document can express: a header described
+    // by content whose encoding names the header itself.
+    let error = ResolvedOpenAPI::try_from(&parse(
+        r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},"paths":{},
+            "components":{"headers":{"Loop":{"content":{"a/b":{"encoding":{"f":{
+              "headers":{"Loop":{"$ref":"#/components/headers/Loop"}}}}}}}}}}"##,
     ))
     .expect_err("cyclic");
     assert_eq!(
         error,
         ResolveError::CyclicReference {
-            reference: "#/components/schemas/Node".to_owned()
+            reference: "#/components/headers/Loop".to_owned()
         }
     );
 }
 
 #[test]
-fn a_cycle_through_another_component_is_reported_where_it_closes() {
+fn a_failure_inside_a_recursive_schema_is_reported_not_swallowed() {
     let error = ResolvedOpenAPI::try_from(&with_schemas(
-        r##""A": { "type": "array", "items": { "$ref": "#/components/schemas/B" } },
-            "B": { "type": "array", "items": { "$ref": "#/components/schemas/A" } }"##,
+        r##""Node": { "type": "object", "properties": {
+              "next": { "$ref": "#/components/schemas/Node" },
+              "bad": { "$ref": "#/components/schemas/Missing" } } }"##,
     ))
-    .expect_err("cyclic");
+    .expect_err("dangling reference");
     assert_eq!(
         error,
-        ResolveError::CyclicReference {
-            reference: "#/components/schemas/A".to_owned()
+        ResolveError::NotFound {
+            section: Section::Schemas,
+            name: "Missing".to_owned()
         }
     );
 }
@@ -587,8 +693,16 @@ fn a_component_used_twice_is_not_mistaken_for_a_cycle() {
     let ResolvedSchemaKind::AllOf { all_of } = &schema(&resolved, "Both").schema_kind else {
         panic!("Both is allOf");
     };
-    assert!(Arc::ptr_eq(&all_of[0], schema(&resolved, "Left")));
-    assert!(Arc::ptr_eq(&all_of[1], schema(&resolved, "Right")));
+    assert!(same(&all_of[0], schema(&resolved, "Left")));
+    assert!(same(&all_of[1], schema(&resolved, "Right")));
+    assert!(same(
+        items(schema(&resolved, "Left")),
+        schema(&resolved, "Pet")
+    ));
+    assert!(same(
+        items(schema(&resolved, "Right")),
+        schema(&resolved, "Pet")
+    ));
 }
 
 #[test]

@@ -1,6 +1,7 @@
 //! A whole document with every `$ref` followed, for callers that would rather
 //! walk a plain tree than resolve at each site.
 
+mod cache;
 mod document;
 mod operation;
 mod parameter;
@@ -17,7 +18,7 @@ pub use parameter::{
     ResolvedHeader, ResolvedParameter, ResolvedParameterData, ResolvedParameterSchemaOrContent,
 };
 pub use response::{ResolvedEncoding, ResolvedMediaType, ResolvedRequestBody, ResolvedResponse};
-pub use schema::{ResolvedAdditionalProperties, ResolvedSchema, ResolvedSchemaKind};
+pub use schema::{NestedSchema, ResolvedAdditionalProperties, ResolvedSchema, ResolvedSchemaKind};
 pub use schema_type::{ResolvedAnySchema, ResolvedArrayType, ResolvedObjectType, ResolvedType};
 
 use crate::ResolveError;

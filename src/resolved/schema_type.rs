@@ -1,11 +1,10 @@
 use super::resolver::{Resolvable, Resolver};
-use super::{ResolvedAdditionalProperties, ResolvedSchema};
+use super::{NestedSchema, ResolvedAdditionalProperties};
 use crate::ResolveError;
 use indexmap::IndexMap;
 use openapiv3::{
     AnySchema, ArrayType, BooleanType, IntegerType, NumberType, ObjectType, StringType, Type,
 };
-use std::sync::Arc;
 
 /// [`Type`] with every `$ref` replaced by the schema it named.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,7 +27,7 @@ pub enum ResolvedType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedObjectType {
     /// See [`ObjectType::properties`].
-    pub properties: IndexMap<String, Arc<ResolvedSchema>>,
+    pub properties: IndexMap<String, NestedSchema>,
     /// See [`ObjectType::required`].
     pub required: Vec<String>,
     /// See [`ObjectType::additional_properties`].
@@ -43,7 +42,7 @@ pub struct ResolvedObjectType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedArrayType {
     /// See [`ArrayType::items`].
-    pub items: Option<Arc<ResolvedSchema>>,
+    pub items: Option<NestedSchema>,
     /// See [`ArrayType::min_items`].
     pub min_items: Option<usize>,
     /// See [`ArrayType::max_items`].
@@ -70,7 +69,7 @@ pub struct ResolvedAnySchema {
     /// See [`AnySchema::maximum`].
     pub maximum: Option<f64>,
     /// See [`AnySchema::properties`].
-    pub properties: IndexMap<String, Arc<ResolvedSchema>>,
+    pub properties: IndexMap<String, NestedSchema>,
     /// See [`AnySchema::required`].
     pub required: Vec<String>,
     /// See [`AnySchema::additional_properties`].
@@ -80,7 +79,7 @@ pub struct ResolvedAnySchema {
     /// See [`AnySchema::max_properties`].
     pub max_properties: Option<usize>,
     /// See [`AnySchema::items`].
-    pub items: Option<Arc<ResolvedSchema>>,
+    pub items: Option<NestedSchema>,
     /// See [`AnySchema::min_items`].
     pub min_items: Option<usize>,
     /// See [`AnySchema::max_items`].
@@ -96,13 +95,13 @@ pub struct ResolvedAnySchema {
     /// See [`AnySchema::max_length`].
     pub max_length: Option<usize>,
     /// See [`AnySchema::one_of`].
-    pub one_of: Vec<Arc<ResolvedSchema>>,
+    pub one_of: Vec<NestedSchema>,
     /// See [`AnySchema::all_of`].
-    pub all_of: Vec<Arc<ResolvedSchema>>,
+    pub all_of: Vec<NestedSchema>,
     /// See [`AnySchema::any_of`].
-    pub any_of: Vec<Arc<ResolvedSchema>>,
+    pub any_of: Vec<NestedSchema>,
     /// See [`AnySchema::not`].
-    pub not: Option<Arc<ResolvedSchema>>,
+    pub not: Option<NestedSchema>,
 }
 
 impl Resolvable for Type {
@@ -125,7 +124,7 @@ impl Resolvable for ObjectType {
 
     fn resolve_inline(&self, cx: &mut Resolver<'_>) -> Result<Self::Resolved, ResolveError> {
         Ok(ResolvedObjectType {
-            properties: cx.ref_or_boxed_map(&self.properties)?,
+            properties: cx.nested_map(&self.properties)?,
             required: self.required.clone(),
             additional_properties: self
                 .additional_properties
@@ -146,7 +145,7 @@ impl Resolvable for ArrayType {
             items: self
                 .items
                 .as_ref()
-                .map(|items| cx.ref_or_boxed(items))
+                .map(|items| cx.nested(items))
                 .transpose()?,
             min_items: self.min_items,
             max_items: self.max_items,
@@ -167,7 +166,7 @@ impl Resolvable for AnySchema {
             exclusive_maximum: self.exclusive_maximum,
             minimum: self.minimum,
             maximum: self.maximum,
-            properties: cx.ref_or_boxed_map(&self.properties)?,
+            properties: cx.nested_map(&self.properties)?,
             required: self.required.clone(),
             additional_properties: self
                 .additional_properties
@@ -179,7 +178,7 @@ impl Resolvable for AnySchema {
             items: self
                 .items
                 .as_ref()
-                .map(|items| cx.ref_or_boxed(items))
+                .map(|items| cx.nested(items))
                 .transpose()?,
             min_items: self.min_items,
             max_items: self.max_items,
@@ -188,10 +187,10 @@ impl Resolvable for AnySchema {
             format: self.format.clone(),
             min_length: self.min_length,
             max_length: self.max_length,
-            one_of: cx.ref_or_vec(&self.one_of)?,
-            all_of: cx.ref_or_vec(&self.all_of)?,
-            any_of: cx.ref_or_vec(&self.any_of)?,
-            not: self.not.as_ref().map(|not| cx.ref_or(not)).transpose()?,
+            one_of: cx.nested_vec(&self.one_of)?,
+            all_of: cx.nested_vec(&self.all_of)?,
+            any_of: cx.nested_vec(&self.any_of)?,
+            not: self.not.as_ref().map(|not| cx.nested(not)).transpose()?,
         })
     }
 }

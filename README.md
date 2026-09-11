@@ -142,10 +142,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 Resolution fails on the first reference that does not resolve, with the same
-`ResolveError` the borrowing traits return. A component that contains a
-reference back to itself, directly or through other components, fails with
-`CyclicReference`: a recursive schema such as a tree node has no finite tree
-form, so it cannot be represented this way.
+`ResolveError` the borrowing traits return.
+
+### Recursive schemas
+
+A schema nested inside another schema is a `NestedSchema`, which is
+`Schema(Arc<ResolvedSchema>)` except where a `$ref` points back at a schema
+that contains it: a tree node whose children are nodes, say. That edge is
+`Recursive(Weak<ResolvedSchema>)`, because a cycle of `Arc`s would never be
+freed. `upgrade()` turns either variant into an `Arc`, and succeeds for a
+recursive edge as long as the document (or the schema it points at) is alive.
+`is_recursive()` tells a code generator where the indirection goes.
+
+Which edge of a cycle is the recursive one is decided by document order: the
+first `$ref`, walking `components` then `paths`, that closes the cycle. A
+component that contains itself in any other way (a header whose content
+encoding names that same header is the only one a document can express) has
+no finite tree form and fails with `CyclicReference`.
 
 ## Errors
 
@@ -153,8 +166,8 @@ Every failure is a distinct [`ResolveError`](https://docs.rs/openapiv3-resolve/l
 typo in the document (`NotFound`, `SectionMismatch`) from a reference this
 crate structurally does not follow (`ExternalDocument`, `PointerTooDeep`) from
 a document that is broken (`ReferenceChainTooLong`, which is what a cycle of
-bare `$ref`s looks like, and `CyclicReference`, which only a full resolution
-can detect).
+bare `$ref`s looks like, and `CyclicReference` for a non-schema component
+that contains itself, which only a full resolution can detect).
 
 Reference chains are walked iteratively and capped at `MAX_REFERENCE_HOPS`, so
 a cyclic document returns an error rather than overflowing the stack.

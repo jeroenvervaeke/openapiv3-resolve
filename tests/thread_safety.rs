@@ -72,3 +72,8 @@ fn two_threads_can_resolve_against_one_document_concurrently() {
 fn a_resolved_document_is_send_and_sync() {
     assert_send_sync::<openapiv3_resolve::ResolvedOpenAPI>();
 }
+
+#[test]
+fn a_nested_schema_edge_is_send_and_sync() {
+    assert_send_sync::<openapiv3_resolve::NestedSchema>();
+}
