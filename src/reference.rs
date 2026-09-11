@@ -211,6 +211,14 @@ fn unescape(segment: &str) -> Cow<'_, str> {
     Cow::Owned(unescaped)
 }
 
+/// Inverse of [`unescape`]: spells `name` as a single JSON pointer segment.
+pub(crate) fn escape(name: &str) -> Cow<'_, str> {
+    if !name.contains(['~', '/']) {
+        return Cow::Borrowed(name);
+    }
+    Cow::Owned(name.replace('~', "~0").replace('/', "~1"))
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -289,6 +297,18 @@ mod tests {
     fn leaves_an_incomplete_percent_escape_alone() {
         let parsed = ComponentRef::parse("#/components/schemas/100%25%zz").unwrap();
         assert_eq!(parsed.name, "100%%zz");
+    }
+
+    #[test]
+    fn escape_round_trips_through_unescape() {
+        for name in ["plain", "/pets/{id}", "a~1b", "~/", "~0"] {
+            assert_eq!(unescape(&escape(name)), name);
+        }
+    }
+
+    #[test]
+    fn escape_borrows_a_name_with_nothing_to_escape() {
+        assert!(matches!(escape("Pet"), Cow::Borrowed("Pet")));
     }
 
     #[test]

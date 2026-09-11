@@ -67,3 +67,8 @@ fn two_threads_can_resolve_against_one_document_concurrently() {
         }
     });
 }
+
+#[test]
+fn a_resolved_document_is_send_and_sync() {
+    assert_send_sync::<openapiv3_resolve::ResolvedOpenAPI>();
+}

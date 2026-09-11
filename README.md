@@ -88,13 +88,73 @@ two can never disagree. Note that `openapiv3::Callback` is a transparent alias
 for `IndexMap<String, PathItem>` rather than a distinct type, so any value of
 that shape resolves as a callback.
 
+## Resolving a whole document
+
+`ResolvedOpenAPI` is the document with every `$ref` followed up front: a
+mirror of `openapiv3::OpenAPI` in which each `ReferenceOr<T>` has become an
+`Arc<ResolvedT>` (or `Arc<T>` for `Example`, `Link` and `SecurityScheme`,
+which hold no references). Every reference to the same component shares one
+`Arc`, so `Arc::ptr_eq` tells whether two sites named the same component, and
+`components` holds those same `Arc`s.
+
+```rust
+use openapiv3::OpenAPI;
+use openapiv3_resolve::{ResolvedOpenAPI, ResolvedParameterSchemaOrContent};
+use std::sync::Arc;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let spec = r##"{
+      "openapi": "3.0.0",
+      "info": { "title": "Pets", "version": "1.0.0" },
+      "paths": {
+        "/pets": {
+          "get": {
+            "parameters": [ { "$ref": "#/components/parameters/Limit" } ],
+            "responses": {}
+          }
+        }
+      },
+      "components": {
+        "parameters": {
+          "Limit": {
+            "name": "limit", "in": "query",
+            "schema": { "$ref": "#/components/schemas/Limit" }
+          }
+        },
+        "schemas": { "Limit": { "type": "integer" } }
+      }
+    }"##;
+
+    let openapi: OpenAPI = serde_json::from_str(spec)?;
+    let resolved = ResolvedOpenAPI::try_from(&openapi)?;
+
+    let get = resolved.paths.paths["/pets"].get.as_ref().ok_or("no GET")?;
+    let limit = get.parameters.first().ok_or("no parameter")?;
+    let ResolvedParameterSchemaOrContent::Schema(schema) = &limit.parameter_data().format else {
+        return Err("limit has content, not a schema".into());
+    };
+
+    let components = resolved.components.as_ref().ok_or("no components")?;
+    assert!(Arc::ptr_eq(limit, &components.parameters["Limit"]));
+    assert!(Arc::ptr_eq(schema, &components.schemas["Limit"]));
+    Ok(())
+}
+```
+
+Resolution fails on the first reference that does not resolve, with the same
+`ResolveError` the borrowing traits return. A component that contains a
+reference back to itself, directly or through other components, fails with
+`CyclicReference`: a recursive schema such as a tree node has no finite tree
+form, so it cannot be represented this way.
+
 ## Errors
 
 Every failure is a distinct [`ResolveError`](https://docs.rs/openapiv3-resolve/latest/openapiv3_resolve/enum.ResolveError.html) variant, so a caller can tell a
 typo in the document (`NotFound`, `SectionMismatch`) from a reference this
 crate structurally does not follow (`ExternalDocument`, `PointerTooDeep`) from
-a document that is broken (`ReferenceChainTooLong`, which is what a cycle
-looks like).
+a document that is broken (`ReferenceChainTooLong`, which is what a cycle of
+bare `$ref`s looks like, and `CyclicReference`, which only a full resolution
+can detect).
 
 Reference chains are walked iteratively and capped at `MAX_REFERENCE_HOPS`, so
 a cyclic document returns an error rather than overflowing the stack.

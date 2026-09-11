@@ -14,13 +14,16 @@ pub use openapiv3;
 mod component;
 mod error;
 mod reference;
+mod resolved;
 
 pub use component::Component;
 pub use error::ResolveError;
 pub use reference::Section;
+pub use resolved::*;
 
 use openapiv3::{OpenAPI, ReferenceOr};
 use reference::ComponentRef;
+use std::borrow::Cow;
 
 /// How many `$ref` hops a single resolution may follow.
 ///
@@ -60,27 +63,7 @@ pub trait ResolveOptionalWithOpenAPI<T> {
 
 impl Resolve for OpenAPI {
     fn resolve_ref<'a, T: Component>(&'a self, reference: &str) -> Result<&'a T, ResolveError> {
-        // Iterative on purpose: recursing here let a cyclic document overflow
-        // the stack, which aborts the process instead of returning an error.
-        let mut pointer: &str = reference;
-        let mut hops: usize = 0;
-
-        loop {
-            match lookup::<T>(self, pointer)? {
-                ReferenceOr::Item(item) => return Ok(item),
-                ReferenceOr::Reference { reference: next } => {
-                    hops += 1;
-                    if hops > MAX_REFERENCE_HOPS {
-                        return Err(ResolveError::ReferenceChainTooLong {
-                            reference: reference.to_owned(),
-                            last: next.clone(),
-                            max_hops: MAX_REFERENCE_HOPS,
-                        });
-                    }
-                    pointer = next.as_str();
-                }
-            }
-        }
+        walk(self, reference).map(|(_, item)| item)
     }
 }
 
@@ -114,11 +97,48 @@ where
     }
 }
 
-/// Looks up one hop: parses the pointer and reads the entry, without following it.
-fn lookup<'a, T: Component>(
+/// Follows `reference` to the inline item at the end of its chain, returning
+/// the name that item is stored under alongside it.
+///
+/// The name is what distinguishes this from [`Resolve::resolve_ref`]: a full
+/// resolution has to share the result between every reference to the same
+/// component, and the final name is the key to share it under.
+pub(crate) fn walk<'a, 'p, T: Component>(
     openapi: &'a OpenAPI,
-    pointer: &str,
-) -> Result<&'a ReferenceOr<T>, ResolveError> {
+    reference: &'p str,
+) -> Result<(Cow<'p, str>, &'a T), ResolveError>
+where
+    'a: 'p,
+{
+    // Iterative on purpose: recursing here let a cyclic document overflow
+    // the stack, which aborts the process instead of returning an error.
+    let mut pointer: &'p str = reference;
+    let mut hops: usize = 0;
+
+    loop {
+        let (parsed, entry) = lookup::<T>(openapi, pointer)?;
+        match entry {
+            ReferenceOr::Item(item) => return Ok((parsed.name, item)),
+            ReferenceOr::Reference { reference: next } => {
+                hops += 1;
+                if hops > MAX_REFERENCE_HOPS {
+                    return Err(ResolveError::ReferenceChainTooLong {
+                        reference: reference.to_owned(),
+                        last: next.clone(),
+                        max_hops: MAX_REFERENCE_HOPS,
+                    });
+                }
+                pointer = next.as_str();
+            }
+        }
+    }
+}
+
+/// Looks up one hop: parses the pointer and reads the entry, without following it.
+fn lookup<'a, 'p, T: Component>(
+    openapi: &'a OpenAPI,
+    pointer: &'p str,
+) -> Result<(ComponentRef<'p>, &'a ReferenceOr<T>), ResolveError> {
     let parsed = ComponentRef::parse(pointer)?;
 
     if parsed.section != T::SECTION {
@@ -133,7 +153,7 @@ fn lookup<'a, T: Component>(
     })?;
 
     match section.get(parsed.name.as_ref()) {
-        Some(entry) => Ok(entry),
+        Some(entry) => Ok((parsed, entry)),
         None => Err(ResolveError::NotFound {
             section: T::SECTION,
             name: parsed.name.into_owned(),
