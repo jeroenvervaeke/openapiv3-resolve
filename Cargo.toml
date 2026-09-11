@@ -1,14 +1,20 @@
 [package]
 name = "openapiv3-resolve"
 version = "0.1.0"
+authors = ["Jeroen Vervaeke <crates.contact.6yqd3@8alias.com>"]
 edition = "2021"
-license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+license = "MIT"
 description = "Reference resolution helpers for the openapiv3 crate."
 repository = "https://github.com/jeroenvervaeke/openapiv3-resolve"
-keywords = ["openapi", "v3", "resolve"]
-categories = ["data-structures", "parser-implementations"]
+documentation = "https://docs.rs/openapiv3-resolve"
+readme = "README.md"
+keywords = ["openapi", "v3", "resolve", "swagger", "ref"]
+categories = ["web-programming", "data-structures"]
 
 [dependencies]
 indexmap = "2"
 openapiv3 = "2.2"
 
+[dev-dependencies]
+serde_json = "1"

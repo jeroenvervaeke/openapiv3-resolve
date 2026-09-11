@@ -1,58 +1,120 @@
 # openapiv3-resolve
 
+[![crates.io](https://img.shields.io/crates/v/openapiv3-resolve.svg)](https://crates.io/crates/openapiv3-resolve)
+[![docs.rs](https://docs.rs/openapiv3-resolve/badge.svg)](https://docs.rs/openapiv3-resolve)
+
 Reference resolution helpers for the [`openapiv3`](https://crates.io/crates/openapiv3) crate.
 
 This crate adds traits that resolve `$ref` pointers (e.g.
 `#/components/schemas/Pet`) against an `OpenAPI` document, returning a
 borrowed reference to the resolved item. It walks chains of references
-transparently and supports the boxed variant `ReferenceOr<Box<T>>` used by
-fields such as `ArrayType::items`.
+transparently, supports the boxed variant `ReferenceOr<Box<T>>` used by fields
+such as `ArrayType::items`, and reports why a reference could not be resolved
+instead of collapsing every failure into "not found".
 
 ## Usage
 
 ```rust
-use openapiv3::OpenAPI;
-use openapiv3_resolve::ResolveWithOpenAPI;
+use openapiv3::{OpenAPI, StatusCode};
+use openapiv3_resolve::{ResolveOptionalWithOpenAPI, ResolveWithOpenAPI};
 
-let openapi: OpenAPI = serde_yaml::from_str(spec).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let spec = r##"{
+      "openapi": "3.0.0",
+      "info": { "title": "Pets", "version": "1.0.0" },
+      "paths": {
+        "/pets": {
+          "get": {
+            "responses": { "200": { "$ref": "#/components/responses/PetList" } }
+          }
+        }
+      },
+      "components": {
+        "responses": {
+          "PetList": {
+            "description": "a list of pets",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } }
+            }
+          }
+        },
+        "schemas": {
+          "Pet": { "title": "Pet", "type": "string" }
+        }
+      }
+    }"##;
 
-let path = openapi.paths.paths.get("/pets").unwrap().as_item().unwrap();
-let response = path
-    .get
-    .as_ref()
-    .unwrap()
-    .responses
-    .responses
-    .get(&openapiv3::StatusCode::Code(200))
-    .unwrap()
-    .resolve(&openapi)
-    .unwrap();
+    let openapi: OpenAPI = serde_json::from_str(spec)?;
 
-let schema = response
-    .content
-    .get("application/json")
-    .unwrap()
-    .schema
-    .resolve(&openapi)
-    .unwrap();
+    let path = openapi.paths.paths.get("/pets").ok_or("no /pets")?;
+    let get = path.resolve(&openapi)?.get.as_ref().ok_or("no GET")?;
+
+    // `responses` holds a `ReferenceOr<Response>`; `resolve` follows the `$ref`.
+    let response = get
+        .responses
+        .responses
+        .get(&StatusCode::Code(200))
+        .ok_or("no 200")?
+        .resolve(&openapi)?;
+
+    // `schema` is an `Option<ReferenceOr<Schema>>`: absent is not an error,
+    // so it gets its own method.
+    let media = response.content.get("application/json").ok_or("no JSON body")?;
+    let schema = media.schema.resolve_optional(&openapi)?.ok_or("untyped body")?;
+
+    assert_eq!(schema.schema_data.title.as_deref(), Some("Pet"));
+    Ok(())
+}
 ```
 
 ## Traits
 
-- `Resolve<T>` — implemented on `OpenAPI` for each component type, takes a
-  full pointer like `#/components/schemas/Pet`.
-- `ResolveWithOpenAPI<T>` — implemented on `ReferenceOr<T>`,
-  `ReferenceOr<Box<T>>` and their `Option<...>` variants; resolves the
-  reference (or returns the inline item) using a borrowed `OpenAPI`.
-- `ResolveWithOpenAPIAndPath<T>` — implemented on `Components` and
-  `IndexMap<String, ReferenceOr<T>>`; used internally and when walking a
-  pointer relative to a sub-document.
+- `Resolve` — implemented on `OpenAPI`. `openapi.resolve_ref::<Schema>(ptr)`
+  takes a full pointer like `#/components/schemas/Pet`. The type argument
+  decides which section is searched.
+- `ResolveWithOpenAPI<T>` — implemented on `ReferenceOr<T>` and
+  `ReferenceOr<Box<T>>`; returns the inline item, or resolves the reference.
+- `ResolveOptionalWithOpenAPI<T>` — implemented on `Option<R>` for any
+  resolvable `R`; `resolve_optional` returns `Ok(None)` for an absent field
+  and an error only for a reference that is present but broken.
+
+Resolvable targets are the nine `#/components` sections plus `#/paths`, listed
+by the `Section` enum. A `$ref` is read as a URI reference: the fragment is
+percent-decoded first, then RFC 6901 unescaped, so the path `/pets/{id}` is
+reachable as `#/paths/~1pets~1%7Bid%7D`.
+
+The `Component` trait that maps a Rust type to its section is sealed, so the
+two can never disagree. Note that `openapiv3::Callback` is a transparent alias
+for `IndexMap<String, PathItem>` rather than a distinct type, so any value of
+that shape resolves as a callback.
+
+## Errors
+
+Every failure is a distinct [`ResolveError`](https://docs.rs/openapiv3-resolve/latest/openapiv3_resolve/enum.ResolveError.html) variant, so a caller can tell a
+typo in the document (`NotFound`, `SectionMismatch`) from a reference this
+crate structurally does not follow (`ExternalDocument`, `PointerTooDeep`) from
+a document that is broken (`ReferenceChainTooLong`, which is what a cycle
+looks like).
+
+Reference chains are walked iteratively and capped at `MAX_REFERENCE_HOPS`, so
+a cyclic document returns an error rather than overflowing the stack.
+
+## Thread safety
+
+`OpenAPI` and every resolvable component are `Send + Sync`, resolution takes
+`&self`, and the returned borrow is `Send + Sync` too — so a resolved reference
+can be held across an `.await` in a `Send` future.
+
+Resolving a `#/components/...` pointer allocates nothing, however long the
+reference chain. Pointers carrying an escape (`~0`, `~1`, `%XX`) are the
+exception: the decoded name has to be built. Both are pinned by a test.
+
+## Minimum supported Rust version
+
+1.85, which is the floor `indexmap` imposes rather than anything this crate
+needs, and it is checked by its own CI job. A dependency raising its MSRV
+raises this one; that is a minor version bump.
 
 ## License
 
-Licensed under either of
-
-- Apache License, Version 2.0
-- MIT license
-
-at your option.
+Licensed under the [MIT license](https://github.com/jeroenvervaeke/openapiv3-resolve/blob/master/LICENSE).

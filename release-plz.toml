@@ -1,0 +1,26 @@
+# Changelog rendering via release-plz's embedded git-cliff: the [changelog]
+# section takes git-cliff's options directly. Defaults cover the rest: a
+# "v{{ version }}" tag and GitHub release per version, and cargo-semver-checks
+# forcing a major bump when the public API breaks.
+[workspace]
+# Publish only when a release PR merges, not on every push to master. With the
+# default, merging anything while the version is unpublished (0.1.0 right now)
+# would try to publish it before a release PR had generated its changelog.
+release_always = false
+
+[changelog]
+header = "# Changelog\n\nAll notable changes to this project will be documented in this file.\n"
+protect_breaking_commits = true
+sort_commits = "newest"
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Bug Fixes" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactoring" },
+    { message = "^docs", group = "Documentation" },
+    { message = "^test", group = "Testing" },
+    { message = "^style", group = "Style" },
+    { message = "^ci", group = "CI" },
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^chore", group = "Miscellaneous" },
+]
