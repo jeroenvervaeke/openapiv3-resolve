@@ -63,6 +63,9 @@ impl<T: PartialEq> PartialEq for Shared<T> {
 /// pointer, because a cycle of owning pointers would never be freed. Which
 /// edge of a cycle is the recursive one is decided by document order: it is
 /// the first `$ref`, walking `components` then `paths`, that closes the cycle.
+/// Within one schema its kind (type, properties, `oneOf`, ...) is walked
+/// before its discriminator mapping, so a cycle that could close through
+/// either closes through the kind.
 ///
 /// The weak pointer always upgrades: every schema a `$ref` can name lives in
 /// the document's `components`, and this edge can only be reached by
@@ -85,6 +88,18 @@ impl NestedSchema {
 
     pub(super) fn recursive(schema: Weak<ResolvedSchema>) -> Self {
         Self(Edge::Recursive(schema))
+    }
+
+    /// Another edge to the same target, recursive if this one is.
+    ///
+    /// Not `Clone`, because a public clone would let an edge outlive the
+    /// document it points into; while the document is being built that
+    /// cannot happen.
+    pub(super) fn duplicate(&self) -> Self {
+        Self(match &self.0 {
+            Edge::Schema(schema) => Edge::Schema(Arc::clone(schema)),
+            Edge::Recursive(schema) => Edge::Recursive(Weak::clone(schema)),
+        })
     }
 
     /// Borrows the nested schema.

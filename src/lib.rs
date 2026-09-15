@@ -148,15 +148,24 @@ fn lookup<'a, 'p, T: Component>(
         });
     }
 
+    let entry = lookup_named::<T>(openapi, &parsed.name)?;
+    Ok((parsed, entry))
+}
+
+/// Reads the entry stored under `name` in `T`'s section, without following it.
+///
+/// The one entry point that takes a component *name* rather than a pointer,
+/// for the place the specification lets a document name a component directly:
+/// a discriminator mapping value.
+pub(crate) fn lookup_named<'a, T: Component>(
+    openapi: &'a OpenAPI,
+    name: &str,
+) -> Result<&'a ReferenceOr<T>, ResolveError> {
     let section = T::section(openapi).ok_or(ResolveError::ComponentsMissing {
         section: T::SECTION,
     })?;
-
-    match section.get(parsed.name.as_ref()) {
-        Some(entry) => Ok((parsed, entry)),
-        None => Err(ResolveError::NotFound {
-            section: T::SECTION,
-            name: parsed.name.into_owned(),
-        }),
-    }
+    section.get(name).ok_or_else(|| ResolveError::NotFound {
+        section: T::SECTION,
+        name: name.to_owned(),
+    })
 }

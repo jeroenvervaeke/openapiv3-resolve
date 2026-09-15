@@ -1,9 +1,9 @@
 use super::resolver::{Resolvable, Resolver};
-use super::{ResolvedSchema, ResolvedSchemaKind, ResolvedType};
+use super::{ResolvedSchema, ResolvedSchemaData, ResolvedSchemaKind, ResolvedType};
 use crate::{Component, ResolveError};
 use openapiv3::{
     BooleanType, Callback, Example, Header, Link, Parameter, PathItem, RequestBody, Response,
-    Schema, SchemaData, SecurityScheme,
+    Schema, SecurityScheme,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -121,7 +121,7 @@ impl Cached for Schema {
                     // dropped together with the `Arc` as soon as we return.
                     failure = Some(error);
                     ResolvedSchema {
-                        schema_data: SchemaData::default(),
+                        schema_data: ResolvedSchemaData::default(),
                         schema_kind: ResolvedSchemaKind::Type(ResolvedType::Boolean(
                             BooleanType::default(),
                         )),

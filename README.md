@@ -96,7 +96,13 @@ mirror of `openapiv3::OpenAPI` in which each `ReferenceOr<T>` has become a
 `SecurityScheme`, which hold no references). `Shared` dereferences to the
 item. Every reference to the same component shares one allocation, so
 `Shared::as_ptr` tells whether two sites named the same component, and
-`components` holds those same allocations.
+`components` holds those same allocations. A schema's `discriminator.mapping`
+is resolved too: a value containing `#` is followed as a `$ref`, any other
+value is the name of a schema under `components/schemas`, and either way the
+entry becomes a `NestedSchema` edge to that schema. On a `oneOf` or `anyOf`
+schema each value must name one of the alternatives and the entry is that
+alternative's edge; a value naming anything else, or a dangling one, fails the
+document.
 
 ```rust
 use openapiv3::OpenAPI;
