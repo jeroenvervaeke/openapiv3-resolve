@@ -82,6 +82,18 @@ pub enum ResolveError {
         /// The `$ref` that closed the cycle, as it appeared in the document.
         reference: String,
     },
+    /// A discriminator on a `oneOf` or `anyOf` schema maps a value to a
+    /// schema that is not one of the alternatives, so the mapping could never
+    /// select anything. Only
+    /// [`ResolvedOpenAPI`](crate::ResolvedOpenAPI) reports this.
+    DiscriminatorMappingMismatch {
+        /// The discriminator's `propertyName`.
+        property_name: String,
+        /// The payload value whose mapping is wrong.
+        value: String,
+        /// The name of the schema the mapping value denotes.
+        schema: String,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -145,6 +157,17 @@ impl fmt::Display for ResolveError {
                     f,
                     "`{reference}` refers back to a non-schema component that contains it, \
                      which cannot be fully resolved"
+                )
+            }
+            Self::DiscriminatorMappingMismatch {
+                property_name,
+                value,
+                schema,
+            } => {
+                write!(
+                    f,
+                    "discriminator `{property_name}` maps `{value}` to `{schema}`, \
+                     which is not one of the schema's alternatives"
                 )
             }
         }

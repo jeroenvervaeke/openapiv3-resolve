@@ -151,6 +151,11 @@ fn every_error_renders_a_distinct_message_naming_its_cause() {
         ResolveError::CyclicReference {
             reference: "#/components/schemas/Node".to_owned(),
         },
+        ResolveError::DiscriminatorMappingMismatch {
+            property_name: "kind".to_owned(),
+            value: "cat".to_owned(),
+            schema: "Cat".to_owned(),
+        },
     ];
 
     let mut rendered: Vec<String> = Vec::new();
@@ -168,6 +173,7 @@ fn every_error_renders_a_distinct_message_naming_its_cause() {
             ResolveError::PointerTooDeep { reference } => reference,
             ResolveError::ReferenceChainTooLong { last, .. } => last,
             ResolveError::CyclicReference { reference } => reference,
+            ResolveError::DiscriminatorMappingMismatch { schema, .. } => schema,
             _ => panic!("unhandled variant: {error:?}"),
         };
         assert!(

@@ -1,7 +1,8 @@
 use super::cache::{Cached, Caches, Slot};
+use super::discriminator::MappingTarget;
 use super::{NestedSchema, Shared};
 use crate::reference::escape;
-use crate::{walk, ResolveError};
+use crate::{lookup_named, walk, ResolveError};
 use indexmap::IndexMap;
 use openapiv3::{OpenAPI, ReferenceOr, Schema};
 use std::borrow::Borrow;
@@ -95,14 +96,49 @@ impl<'a> Resolver<'a> {
         &mut self,
         entry: &ReferenceOr<S>,
     ) -> Result<NestedSchema, ResolveError> {
-        let reference = match entry {
-            ReferenceOr::Item(item) => {
-                return self.inline_arc(item.borrow()).map(NestedSchema::schema)
-            }
-            ReferenceOr::Reference { reference } => reference,
+        match entry {
+            ReferenceOr::Item(item) => self.inline_arc(item.borrow()).map(NestedSchema::schema),
+            ReferenceOr::Reference { reference } => self.nested_reference(reference),
+        }
+    }
+
+    /// Resolves a discriminator mapping value found inside a schema that has
+    /// no alternatives to match it against; see [`Self::nested`].
+    pub(super) fn nested_target(
+        &mut self,
+        target: MappingTarget<'_>,
+    ) -> Result<NestedSchema, ResolveError> {
+        match target {
+            MappingTarget::Reference(reference) => self.nested_reference(reference),
+            MappingTarget::Name(name) => match lookup_named::<Schema>(self.openapi, name)? {
+                ReferenceOr::Item(item) => self.nested_slot(name, item),
+                ReferenceOr::Reference { reference } => self.nested_reference(reference),
+            },
+        }
+    }
+
+    /// The name of the component a mapping value finally denotes, after any
+    /// chain of `$ref`s, which is the name two ways of naming one schema
+    /// agree on. A bare name is looked up as written, never parsed as a
+    /// pointer.
+    pub(super) fn schema_name(&self, target: MappingTarget<'_>) -> Result<String, ResolveError> {
+        let reference = match target {
+            MappingTarget::Reference(reference) => reference,
+            MappingTarget::Name(name) => match lookup_named::<Schema>(self.openapi, name)? {
+                ReferenceOr::Item(_) => return Ok(name.to_owned()),
+                ReferenceOr::Reference { reference } => reference,
+            },
         };
+        walk::<Schema>(self.openapi, reference).map(|(name, _)| name.into_owned())
+    }
+
+    fn nested_reference(&mut self, reference: &str) -> Result<NestedSchema, ResolveError> {
         let (name, item) = walk::<Schema>(self.openapi, reference)?;
-        Ok(match self.slot::<Schema>(&name, item)? {
+        self.nested_slot(&name, item)
+    }
+
+    fn nested_slot(&mut self, name: &str, item: &Schema) -> Result<NestedSchema, ResolveError> {
+        Ok(match self.slot::<Schema>(name, item)? {
             Slot::Done(resolved) => NestedSchema::schema(resolved),
             Slot::InProgress(weak) => NestedSchema::recursive(weak),
         })

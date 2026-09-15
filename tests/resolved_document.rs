@@ -5,9 +5,9 @@ mod common;
 use common::spec;
 use openapiv3::{OpenAPI, StatusCode};
 use openapiv3_resolve::{
-    NestedSchema, ResolveError, ResolvedAdditionalProperties, ResolvedOpenAPI, ResolvedParameter,
-    ResolvedParameterSchemaOrContent, ResolvedSchema, ResolvedSchemaKind, ResolvedType,
-    SchemaGuard, Section, Shared,
+    NestedSchema, ResolveError, ResolvedAdditionalProperties, ResolvedDiscriminator,
+    ResolvedOpenAPI, ResolvedParameter, ResolvedParameterSchemaOrContent, ResolvedSchema,
+    ResolvedSchemaKind, ResolvedType, SchemaGuard, Section, Shared,
 };
 use std::ptr;
 
@@ -68,6 +68,14 @@ fn property<'a>(schema: &'a ResolvedSchema, name: &str) -> &'a NestedSchema {
         ResolvedSchemaKind::Type(ResolvedType::Object(object)) => &object.properties[name],
         other => panic!("not an object: {other:?}"),
     }
+}
+
+fn discriminator(schema: &ResolvedSchema) -> &ResolvedDiscriminator {
+    schema
+        .schema_data
+        .discriminator
+        .as_ref()
+        .expect("has a discriminator")
 }
 
 /// A document exercising every reference site outside `components/schemas`.
@@ -786,4 +794,472 @@ fn resolving_by_value_matches_resolving_by_reference() {
     let by_reference = resolve(&openapi);
     let by_value = ResolvedOpenAPI::try_from(openapi).expect("document resolves");
     assert_eq!(by_reference, by_value);
+}
+
+#[test]
+fn a_discriminator_mapping_by_reference_shares_the_schema_it_names() {
+    let resolved = resolve(&with_schemas(
+        r##""Cat": { "title": "Cat", "type": "object" },
+            "Dog": { "title": "Dog", "type": "object" },
+            "Pet": {
+              "discriminator": {
+                "propertyName": "kind",
+                "mapping": { "cat": "#/components/schemas/Cat", "dog": "#/components/schemas/Dog" },
+                "x-note": true
+              },
+              "oneOf": [ { "$ref": "#/components/schemas/Cat" }, { "$ref": "#/components/schemas/Dog" } ]
+            }"##,
+    ));
+    let discriminator = discriminator(schema(&resolved, "Pet"));
+    assert_eq!(discriminator.property_name, "kind");
+    assert_eq!(discriminator.extensions["x-note"], serde_json::json!(true));
+    assert_eq!(
+        discriminator.mapping.keys().collect::<Vec<_>>(),
+        ["cat", "dog"]
+    );
+    assert!(same(
+        &discriminator.mapping["cat"],
+        schema(&resolved, "Cat")
+    ));
+    assert!(same(
+        &discriminator.mapping["dog"],
+        schema(&resolved, "Dog")
+    ));
+}
+
+#[test]
+fn a_discriminator_mapping_by_bare_name_shares_the_schema_it_names() {
+    let resolved = resolve(&with_schemas(
+        r##""Cat": { "title": "Cat", "type": "object" },
+            "Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "$ref": "#/components/schemas/Cat" } ]
+            }"##,
+    ));
+    let discriminator = discriminator(schema(&resolved, "Pet"));
+    assert!(same(
+        &discriminator.mapping["cat"],
+        schema(&resolved, "Cat")
+    ));
+}
+
+#[test]
+fn a_bare_mapping_name_is_looked_up_verbatim() {
+    // Names outside the specification's grammar, including ones that look
+    // JSON-pointer-escaped or percent-encoded, are matched exactly as written.
+    for name in ["Cat", "a/b~c", "caf%C3%A9", "100%25", "a%2Fb"] {
+        let resolved = resolve(&with_schemas(&format!(
+            r##""{name}": {{ "type": "object" }},
+                "Pet": {{
+                  "type": "object",
+                  "discriminator": {{ "propertyName": "kind", "mapping": {{ "x": "{name}" }} }}
+                }}"##
+        )));
+        let discriminator = discriminator(schema(&resolved, "Pet"));
+        assert!(
+            same(&discriminator.mapping["x"], schema(&resolved, name)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_bare_mapping_name_is_not_percent_decoded() {
+    let resolved = resolve(&with_schemas(
+        r##""café": { "title": "decoded", "type": "object" },
+            "caf%C3%A9": { "title": "raw", "type": "object" },
+            "Pet": {
+              "type": "object",
+              "discriminator": { "propertyName": "kind", "mapping": { "x": "caf%C3%A9" } }
+            }"##,
+    ));
+    let discriminator = discriminator(schema(&resolved, "Pet"));
+    assert!(same(
+        &discriminator.mapping["x"],
+        schema(&resolved, "caf%C3%A9")
+    ));
+}
+
+#[test]
+fn a_discriminator_mapping_back_to_its_own_schema_is_recursive() {
+    let resolved = resolve(&with_schemas(
+        r##""Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "pet": "#/components/schemas/Pet" } },
+              "oneOf": [ { "$ref": "#/components/schemas/Pet" } ]
+            }"##,
+    ));
+    let pet = schema(&resolved, "Pet");
+    let edge = &discriminator(pet).mapping["pet"];
+    assert!(edge.is_recursive());
+    assert!(points_at(edge, pet));
+}
+
+#[test]
+fn a_dangling_discriminator_mapping_fails_the_whole_document() {
+    let error = ResolvedOpenAPI::try_from(&with_schemas(
+        r##""Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "#/components/schemas/Cat" } },
+              "oneOf": [ { "type": "object" } ]
+            }"##,
+    ))
+    .expect_err("mapping target is missing");
+    assert_eq!(
+        error,
+        ResolveError::NotFound {
+            section: Section::Schemas,
+            name: "Cat".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_dangling_bare_discriminator_mapping_name_fails_the_whole_document() {
+    let error = ResolvedOpenAPI::try_from(&with_schemas(
+        r##""Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "type": "object" } ]
+            }"##,
+    ))
+    .expect_err("mapping target is missing");
+    assert_eq!(
+        error,
+        ResolveError::NotFound {
+            section: Section::Schemas,
+            name: "Cat".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_discriminator_mapping_into_another_document_is_an_error() {
+    let error = ResolvedOpenAPI::try_from(&with_schemas(
+        r##""Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "pets.yaml#/components/schemas/Cat" } },
+              "oneOf": [ { "type": "object" } ]
+            }"##,
+    ))
+    .expect_err("mapping target is external");
+    assert_eq!(
+        error,
+        ResolveError::ExternalDocument {
+            document: "pets.yaml".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_discriminator_mapping_into_another_section_is_an_error() {
+    let error = ResolvedOpenAPI::try_from(&with_schemas(
+        r##""Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "#/components/responses/Cat" } },
+              "oneOf": [ { "type": "object" } ]
+            }"##,
+    ))
+    .expect_err("mapping target is a response");
+    assert_eq!(
+        error,
+        ResolveError::SectionMismatch {
+            expected: Section::Schemas,
+            found: Section::Responses,
+        }
+    );
+}
+
+#[test]
+fn a_discriminator_mapping_into_the_middle_of_a_schema_is_an_error() {
+    let reference = "#/components/schemas/Cat/properties/name";
+    let error = ResolvedOpenAPI::try_from(&with_schemas(&format!(
+        r##""Pet": {{
+              "discriminator": {{ "propertyName": "kind", "mapping": {{ "cat": "{reference}" }} }},
+              "oneOf": [ {{ "type": "object" }} ]
+            }}"##
+    )))
+    .expect_err("mapping target is inside a schema");
+    assert_eq!(
+        error,
+        ResolveError::PointerTooDeep {
+            reference: reference.to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_discriminator_on_an_inline_property_schema_resolves_its_mapping() {
+    let resolved = resolve(&with_schemas(
+        r##""Cat": { "title": "Cat", "type": "object" },
+            "Owner": { "type": "object", "properties": { "pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "$ref": "#/components/schemas/Cat" } ]
+            } } }"##,
+    ));
+    let pet = property(schema(&resolved, "Owner"), "pet").get();
+    assert!(same(
+        &discriminator(&pet).mapping["cat"],
+        schema(&resolved, "Cat")
+    ));
+}
+
+#[test]
+fn a_discriminator_on_a_path_inline_schema_resolves_its_mapping() {
+    let resolved = resolve(&parse(
+        r##"{"openapi":"3.0.0","info":{"title":"t","version":"1"},
+            "paths":{"/pets":{"post":{"requestBody":{"content":{"application/json":{"schema":{
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "$ref": "#/components/schemas/Cat" } ]
+            }}}},"responses":{}}}},
+            "components":{"schemas":{"Cat": { "title": "Cat", "type": "object" }}}}"##,
+    ));
+    let post = resolved.paths().paths["/pets"]
+        .post
+        .as_ref()
+        .expect("POST /pets");
+    let body = post.request_body.as_ref().expect("body");
+    let in_body = body.content["application/json"]
+        .schema
+        .as_ref()
+        .expect("schema");
+    assert!(same(
+        &discriminator(in_body).mapping["cat"],
+        schema(&resolved, "Cat")
+    ));
+}
+
+#[test]
+fn two_resolutions_of_a_discriminator_mapping_are_equal() {
+    let openapi = with_schemas(
+        r##""Cat": { "type": "object" },
+            "Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "$ref": "#/components/schemas/Cat" } ]
+            }"##,
+    );
+    assert_eq!(resolve(&openapi), resolve(&openapi));
+}
+
+#[test]
+fn a_self_referential_discriminator_mapping_can_be_printed_and_compared() {
+    let openapi = with_schemas(
+        r##""Pet": {
+              "type": "object",
+              "discriminator": { "propertyName": "kind", "mapping": { "pet": "Pet" } }
+            }"##,
+    );
+    let resolved = resolve(&openapi);
+    let printed = format!("{resolved:?}");
+    assert!(printed.contains("Recursive(..)"), "{printed}");
+    // Recursive edges compare by identity, so a second resolution differs.
+    assert_ne!(resolved, resolve(&openapi));
+}
+
+#[test]
+fn a_discriminator_mapping_is_the_alternative_edge_it_names() {
+    let resolved = resolve(&with_schemas(
+        r##""Cat": { "type": "object" },
+            "Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "$ref": "#/components/schemas/Cat" } ]
+            }"##,
+    ));
+    let pet = schema(&resolved, "Pet");
+    let ResolvedSchemaKind::OneOf { one_of } = &pet.schema_kind else {
+        panic!("Pet is oneOf");
+    };
+    let mapped = &discriminator(pet).mapping["cat"];
+    assert!(ptr::eq(
+        SchemaGuard::as_ptr(&mapped.get()),
+        SchemaGuard::as_ptr(&one_of[0].get())
+    ));
+    assert_eq!(mapped.is_recursive(), one_of[0].is_recursive());
+}
+
+#[test]
+fn a_discriminator_mapping_matches_an_any_of_alternative() {
+    let resolved = resolve(&with_schemas(
+        r##""Cat": { "type": "object" },
+            "Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "#/components/schemas/Cat" } },
+              "anyOf": [ { "$ref": "#/components/schemas/Cat" } ]
+            }"##,
+    ));
+    assert!(same(
+        &discriminator(schema(&resolved, "Pet")).mapping["cat"],
+        schema(&resolved, "Cat")
+    ));
+}
+
+#[test]
+fn a_discriminator_on_a_typed_one_of_matches_its_alternatives() {
+    // `type` next to `oneOf` parses as an untyped `Any` schema upstream; the
+    // alternatives live in its `one_of` and `any_of` fields.
+    let resolved = resolve(&with_schemas(
+        r##""AWS": { "type": "object" }, "GCP": { "type": "object" },
+            "Account": {
+              "type": "object",
+              "discriminator": { "propertyName": "cloudProvider",
+                                 "mapping": { "aws": "#/components/schemas/AWS", "gcp": "GCP" } },
+              "oneOf": [ { "$ref": "#/components/schemas/AWS" } ],
+              "anyOf": [ { "$ref": "#/components/schemas/GCP" } ]
+            }"##,
+    ));
+    let account = schema(&resolved, "Account");
+    assert!(matches!(account.schema_kind, ResolvedSchemaKind::Any(_)));
+    let discriminator = discriminator(account);
+    assert!(same(
+        &discriminator.mapping["aws"],
+        schema(&resolved, "AWS")
+    ));
+    assert!(same(
+        &discriminator.mapping["gcp"],
+        schema(&resolved, "GCP")
+    ));
+}
+
+#[test]
+fn a_discriminator_mapping_matches_an_alternative_through_an_alias() {
+    // Both sides are compared by the name at the end of the chain.
+    let resolved = resolve(&with_schemas(
+        r##""Cat": { "type": "object" },
+            "CatAlias": { "$ref": "#/components/schemas/Cat" },
+            "Pet": {
+              "discriminator": { "propertyName": "kind",
+                                 "mapping": { "a": "Cat", "b": "CatAlias", "c": "#/components/schemas/CatAlias" } },
+              "oneOf": [ { "$ref": "#/components/schemas/CatAlias" } ]
+            }"##,
+    ));
+    let discriminator = discriminator(schema(&resolved, "Pet"));
+    for value in ["a", "b", "c"] {
+        assert!(
+            same(&discriminator.mapping[value], schema(&resolved, "Cat")),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn a_discriminator_mapping_to_a_schema_that_is_not_an_alternative_is_an_error() {
+    let error = ResolvedOpenAPI::try_from(&with_schemas(
+        r##""Cat": { "type": "object" }, "Dog": { "type": "object" },
+            "Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "$ref": "#/components/schemas/Dog" } ]
+            }"##,
+    ))
+    .expect_err("Cat is not an alternative");
+    assert_eq!(
+        error,
+        ResolveError::DiscriminatorMappingMismatch {
+            property_name: "kind".to_owned(),
+            value: "cat".to_owned(),
+            schema: "Cat".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_discriminator_mapping_cannot_name_an_inline_alternative() {
+    let error = ResolvedOpenAPI::try_from(&with_schemas(
+        r##""Cat": { "type": "object" },
+            "Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "type": "object" } ]
+            }"##,
+    ))
+    .expect_err("only an inline alternative exists");
+    assert!(
+        matches!(error, ResolveError::DiscriminatorMappingMismatch { .. }),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_dangling_mapping_on_a_one_of_reports_the_dangling_reference() {
+    // Existence is checked before membership, so the more specific error wins.
+    let error = ResolvedOpenAPI::try_from(&with_schemas(
+        r##""Dog": { "type": "object" },
+            "Pet": {
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } },
+              "oneOf": [ { "$ref": "#/components/schemas/Dog" } ]
+            }"##,
+    ))
+    .expect_err("Cat is missing");
+    assert_eq!(
+        error,
+        ResolveError::NotFound {
+            section: Section::Schemas,
+            name: "Cat".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_discriminator_on_an_inheritance_parent_resolves_its_children() {
+    let resolved = resolve(&with_schemas(
+        r##""Pet": {
+              "type": "object",
+              "discriminator": { "propertyName": "kind", "mapping": { "cat": "Cat" } }
+            },
+            "Cat": { "allOf": [ { "$ref": "#/components/schemas/Pet" } ] }"##,
+    ));
+    let pet = schema(&resolved, "Pet");
+    let cat = schema(&resolved, "Cat");
+    assert!(same(&discriminator(pet).mapping["cat"], cat));
+    let ResolvedSchemaKind::AllOf { all_of } = &cat.schema_kind else {
+        panic!("Cat is allOf");
+    };
+    assert!(all_of[0].is_recursive());
+    assert!(points_at(&all_of[0], pet));
+}
+
+#[test]
+fn a_schema_walks_its_kind_before_its_discriminator_mapping() {
+    // A's property reaches C first, so the cycle between B and C closes at
+    // B's edge; walking the mapping first would close it at C's instead.
+    let resolved = resolve(&with_schemas(
+        r##""A": {
+              "type": "object",
+              "properties": { "c": { "$ref": "#/components/schemas/C" } },
+              "discriminator": { "propertyName": "kind", "mapping": { "b": "B" } }
+            },
+            "B": { "type": "object", "properties": { "c": { "$ref": "#/components/schemas/C" } } },
+            "C": { "type": "object", "properties": { "b": { "$ref": "#/components/schemas/B" } } }"##,
+    ));
+    assert!(property(schema(&resolved, "B"), "c").is_recursive());
+    assert!(!property(schema(&resolved, "C"), "b").is_recursive());
+    assert!(!discriminator(schema(&resolved, "A")).mapping["b"].is_recursive());
+}
+
+#[test]
+fn a_discriminator_without_a_mapping_keeps_its_property_name() {
+    let resolved = resolve(&with_schemas(
+        r##""Pet": { "discriminator": { "propertyName": "kind" }, "oneOf": [ { "type": "object" } ] }"##,
+    ));
+    let discriminator = discriminator(schema(&resolved, "Pet"));
+    assert_eq!(discriminator.property_name, "kind");
+    assert!(discriminator.mapping.is_empty());
+}
+
+#[test]
+fn schema_data_is_copied_over_field_by_field() {
+    let resolved = resolve(&with_schemas(
+        r##""Pet": {
+              "type": "string", "title": "Pet", "description": "a pet", "nullable": true,
+              "readOnly": true, "writeOnly": true, "deprecated": true, "default": "cat",
+              "example": "dog", "externalDocs": { "url": "https://example.com" }, "x-tag": 1
+            }"##,
+    ));
+    let data = &schema(&resolved, "Pet").schema_data;
+    assert_eq!(data.title.as_deref(), Some("Pet"));
+    assert_eq!(data.description.as_deref(), Some("a pet"));
+    assert!(data.nullable);
+    assert!(data.read_only);
+    assert!(data.write_only);
+    assert!(data.deprecated);
+    assert_eq!(data.default, Some(serde_json::json!("cat")));
+    assert_eq!(data.example, Some(serde_json::json!("dog")));
+    assert_eq!(
+        data.external_docs.as_ref().map(|docs| docs.url.as_str()),
+        Some("https://example.com")
+    );
+    assert_eq!(data.extensions["x-tag"], serde_json::json!(1));
+    assert!(data.discriminator.is_none());
 }

@@ -3,6 +3,7 @@
 
 mod cache;
 mod components;
+mod discriminator;
 mod document;
 mod operation;
 mod parameter;
@@ -13,13 +14,16 @@ mod schema_type;
 mod shared;
 
 pub use components::ResolvedComponents;
+pub use discriminator::ResolvedDiscriminator;
 pub use document::{ResolvedCallback, ResolvedOpenAPI, ResolvedPathItem, ResolvedPaths};
 pub use operation::{ResolvedOperation, ResolvedResponses};
 pub use parameter::{
     ResolvedHeader, ResolvedParameter, ResolvedParameterData, ResolvedParameterSchemaOrContent,
 };
 pub use response::{ResolvedEncoding, ResolvedMediaType, ResolvedRequestBody, ResolvedResponse};
-pub use schema::{ResolvedAdditionalProperties, ResolvedSchema, ResolvedSchemaKind};
+pub use schema::{
+    ResolvedAdditionalProperties, ResolvedSchema, ResolvedSchemaData, ResolvedSchemaKind,
+};
 pub use schema_type::{ResolvedAnySchema, ResolvedArrayType, ResolvedObjectType, ResolvedType};
 pub use shared::{NestedSchema, SchemaGuard, Shared};
 
