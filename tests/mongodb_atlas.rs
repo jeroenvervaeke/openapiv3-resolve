@@ -153,3 +153,70 @@ fn a_polymorphic_cycle_closes_on_whichever_side_comes_second() {
         .expect("lists Tenant");
     assert!(!tenant_entry.is_recursive());
 }
+
+#[test]
+fn every_discriminator_mapping_resolves() {
+    // Atlas uses both patterns: `oneOf` parents whose mapping must match an
+    // alternative, and plain object parents whose subtypes `allOf` them.
+    let components = resolved().components().expect("has components");
+    let (mut on_alternatives, mut on_parents) = (0, 0);
+    for schema in components.schemas.values() {
+        let Some(discriminator) = &schema.schema_data.discriminator else {
+            continue;
+        };
+        let alternatives = match &schema.schema_kind {
+            ResolvedSchemaKind::OneOf { one_of } => Some(one_of.as_slice()),
+            ResolvedSchemaKind::AnyOf { any_of } => Some(any_of.as_slice()),
+            ResolvedSchemaKind::Any(any) if !any.one_of.is_empty() => Some(any.one_of.as_slice()),
+            ResolvedSchemaKind::Any(_)
+            | ResolvedSchemaKind::Type(_)
+            | ResolvedSchemaKind::AllOf { .. }
+            | ResolvedSchemaKind::Not { .. } => None,
+        };
+        for (value, edge) in &discriminator.mapping {
+            let target = SchemaGuard::as_ptr(&edge.get());
+            let Some(alternatives) = alternatives else {
+                on_parents += 1;
+                assert!(
+                    components
+                        .schemas
+                        .values()
+                        .any(|schema| Shared::as_ptr(schema) == target),
+                    "{value} maps to a schema outside components"
+                );
+                continue;
+            };
+            on_alternatives += 1;
+            let alternative = alternatives
+                .iter()
+                .find(|alternative| SchemaGuard::as_ptr(&alternative.get()) == target)
+                .unwrap_or_else(|| panic!("{value} maps outside the alternatives"));
+            assert_eq!(edge.is_recursive(), alternative.is_recursive(), "{value}");
+        }
+    }
+    // 720 of the document's 728 mapping entries; the other 8 sit on one
+    // discriminator nested inside a component's property, which the whole
+    // document resolving already covers.
+    assert_eq!((on_alternatives, on_parents), (337, 383));
+}
+
+#[test]
+fn account_details_maps_each_provider_to_its_schema() {
+    let account = schema("AccountDetails");
+    let discriminator = account
+        .schema_data
+        .discriminator
+        .as_ref()
+        .expect("has a discriminator");
+    assert_eq!(discriminator.property_name, "cloudProvider");
+    for (value, name) in [
+        ("aws", "AWSAccountDetails"),
+        ("azure", "AzureAccountDetails"),
+        ("gcp", "GCPAccountDetails"),
+    ] {
+        assert!(
+            points_at(&discriminator.mapping[value], schema(name)),
+            "{value}"
+        );
+    }
+}
